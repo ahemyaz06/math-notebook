@@ -18,12 +18,10 @@ export function roundForSpeech(n) {
   // would make -3.75 into -3.5).
   const to = (k) => Math.sign(n) * Math.round(Math.abs(n) * k) / k;
   // Written: two decimals, but a small number that is not 0 keeps two digits (0.004 is not 0).
-  const written = () => (Math.abs(n) < .005 && Math.abs(n) > 1e-7 ? Number(n.toPrecision(2)) : to(100));
-  const r = numberStyle === 'half' ? to(2) : numberStyle === 'tenth' ? to(10) : numberStyle === 'written' ? written() : n;
-  // A point found a hair inside an open end (1e-9 for "0 < x") is said as that end.
-  return Math.abs(r) < 1e-7 ? 0 : r;
+  const written = () => (Math.abs(n) < .005 ? Number(n.toPrecision(2)) : to(100));
+  return numberStyle === 'half' ? to(2) : numberStyle === 'tenth' ? to(10) : numberStyle === 'written' ? written() : n;
 }
-export const say = (n) => formatNumber(roundForSpeech(n)).replace('-', 'minus ');
+export const say = (n) => formatNumber(roundForSpeech(n)).replace(/e\+?(?=-?\d+$)/, ' times 10 to the ').replaceAll('-', 'minus ');
 // Two decimals while work runs: what is written, and the points a description names.
 export function exactly(work) {
   const before = numberStyle;
@@ -369,9 +367,8 @@ export function fitYRange(functions, [x0, x1]) {
 
 // ---------- points of interest ----------
 
-// Sound Lab's points of interest, checked: where a division by zero is found but the curve
-// stays finite on both sides and both sides agree, it is a hole, not a vertical asymptote
-// (in (x^2-x-2)/(x-2) the row has a hole at x = 2, filled or not by another row).
+// Start with Sound Lab's sampled points of interest, then add Notebook's
+// corners, endpoints, jumps and other features of piecewise graphs.
 export function landmarksOf(graph, boundary) {
   const out = [];
   // Defined nowhere in the window (1/0): nothing to point out, and no "asymptote" at every step.
@@ -385,32 +382,15 @@ export function landmarksOf(graph, boundary) {
   };
   for (const l of detectLandmarks(graph, boundary)) {
     if ((l.kind === 'maximum' || l.kind === 'minimum') && flatAround(l.x, l.y)) continue;
-    if (l.kind === 'asymptote') {
-      const sides = [-1e-5, 1e-5].map((d) => graph.yAt(l.x + d));
-      const scale = 1 + Math.max(...sides.map(Math.abs));
-      if (sides.every(Number.isFinite) && Math.abs(sides[0] - sides[1]) < 1e-3 * scale && scale < 1e4) {
-        const here = graph.limitAt(l.x);
-        // Filled by another row: no point of interest of its own (its dots say what happens).
-        if (!here.defined) out.push({ kind: 'open-point', x: l.x, y: Number(((sides[0] + sides[1]) / 2).toPrecision(10)), label: `Open point (hole) at (${formatNumber(l.x)}, ${formatNumber((sides[0] + sides[1]) / 2)})` });
-        continue;
-      }
-    }
-    // A flat root (x - 3)^3 is found a hair away (3.00002); the whole number is the root
-    // when the function is at least as close to zero there.
-    if (l.kind === 'x-axis') {
-      const r = Number(l.x.toFixed(3));
-      const at = (x) => Math.abs(valueAt(graph, x));
-      if (r !== l.x && Math.abs(r - l.x) < 1e-3 && at(r) <= at(l.x) + 1e-12) l.x = r;
-    }
     out.push(l);
   }
   let all = [...out, ...shapeMarks(graph, boundary, out), ...jumpMarks(graph, boundary, out)]
     .filter((l) => !((l.kind === 'maximum' || l.kind === 'minimum') && Number.isFinite(l.y) && flatAround(l.x, l.y)));
-  // A corner, an end or a turning point at height 0 (where pieces meet) is a zero too; an end
-  // the curve does not include (an open dot) is not on the curve, so it is not.
+  // Corners and included ends can have zeros the smooth search misses. Check
+  // the function's value, since the label may round a small height to zero.
   for (const l of [...all]) {
-    if (['corner', 'endpoint', 'minimum', 'maximum'].includes(l.kind) && l.y === 0 && l.included !== false && !all.some((m) => ['x-axis', 'origin'].includes(m.kind) && Math.abs(m.x - l.x) < 1e-6)) {
-      all.push(Math.abs(l.x) < 1e-9 ? { kind: 'origin', x: 0, y: 0, label: 'Origin (0, 0)' } : { kind: 'x-axis', x: l.x, y: 0, label: `X-axis root at (${formatNumber(l.x)}, 0)` });
+    if (['corner', 'endpoint'].includes(l.kind) && l.included !== false && valueAt(graph, l.x) === 0 && !all.some((m) => ['x-axis', 'origin'].includes(m.kind) && Math.abs(m.x - l.x) < 1e-6)) {
+      all.push(l.x === 0 ? { kind: 'origin', x: 0, y: 0, label: 'Origin (0, 0)' } : { kind: 'x-axis', x: l.x, y: 0, label: `X-axis root at (${formatNumber(l.x)}, 0)` });
     }
   }
   // sin(1/x) near 0: the zeros and turns crowd together without end. Said once, as that.
@@ -577,7 +557,8 @@ function zoomKink(graph, lo, hi) {
   // A jump in the curve (not a kink): the values still step apart as much this close in.
   if (best.step > 0.2 * firstStep) return null;
   // Smooth: the slope's jump shrank about 10x per zoom. A kink holds (corner) or grows (cusp).
-  if (!(jumps.at(-1) > 0.3 * jumps[1]) || jumps.at(-1) < 1e-3 * (1 + Math.abs(best.left) + Math.abs(best.right))) return null;
+  if (!(jumps.at(-1) > 0.3 * Math.max(jumps[1], jumps.at(-2))) ||
+      jumps.at(-1) < 1e-3 * (1 + Math.abs(best.left) + Math.abs(best.right))) return null;
   // A cusp: the slopes on each side keep growing the closer you look.
   return { ...best, steep: jumps.at(-1) > 3 * jumps[1] };
 }
@@ -602,7 +583,7 @@ function zoomSteep(graph, lo, hi) {
     firstStep ??= best.step;
     lo = x - 2 * h; hi = x + 2 * h;
   }
-  if (best.step > 0.2 * firstStep || !(peaks.at(-1) > 3 * peaks[0])) return null;
+  if (best.step > 0.2 * firstStep || !(peaks.at(-1) > Math.max(3 * peaks[0], 1.3 * peaks.at(-2)))) return null;
   return { ...best, steep: true };
 }
 
@@ -639,7 +620,7 @@ export function shapeMarks(graph, boundary, known = []) {
 
   function kink(k, holds) {
     const x = niceX(graph, k.x, holds);
-    const y0 = valueAt(graph, x), y = Math.abs(y0) < 1e-7 ? 0 : tidy(y0);
+    const y = Number(valueAt(graph, x).toPrecision(10));
     if (!Number.isFinite(y) || near(x, ['corner'])) return;
     const steep = k.steep;
     const shape = steep ? (Math.sign(k.left) === Math.sign(k.right) ? 'vertical tangent' : 'cusp') : 'sharp corner';
@@ -675,7 +656,7 @@ export function shapeMarks(graph, boundary, known = []) {
     // Values too small for the computer (e^(-1/x^2) near 0) are not an end of the curve.
     if (toward.some((v) => v !== 0 && Math.abs(v) < 1e-100)) continue;
     const x = single ? niceX(graph, edge, () => true)
-      : niceX(graph, edge, (r) => Number.isFinite(valueAt(graph, r + dir * 1e-9)) && !Number.isFinite(valueAt(graph, r - dir * 1e-4)));
+      : niceX(graph, edge, (r) => Number.isFinite(valueAt(graph, r + dir * 1e-8)) && !Number.isFinite(valueAt(graph, r - dir * 1e-4)));
     if (single && near(x, ['asymptote'])) continue;
     if (!settles) {
       add({ kind: 'asymptote', x, y: null, label: `Vertical asymptote at x = ${formatNumber(x)}: the curve runs ${toward[3] > 0 ? 'up' : 'down'} beside it` });

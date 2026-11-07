@@ -1,10 +1,11 @@
-MATH NOTEBOOK (portable)
+MATH NOTEBOOK 0.7.6 BETA (portable)
 
 A document editor for maths that works like Word and reads well with NVDA and MathCAT.
 Nothing to install, and no AI: everything is done by exact rules on this computer.
 
 START
-Double-click "Math Notebook.exe" in this folder. The cursor is in an empty document.
+Extract all files from the zip into a writable folder, then open "Math Notebook.exe".
+The cursor is in an empty document. Help > Open the user guide opens the full guide.
 Press Alt for the menus (File, Edit, Insert, Format, Table, Math, Graph, Review, Teacher,
 Settings, Help). The toolbar above the document has the most used commands as named
 buttons; F6 goes between it and the document. F1 opens the keyboard shortcuts page.
@@ -41,8 +42,8 @@ F7 checks spelling as in Word (the Windows spell checker); Alt+F7 goes to the ne
 THIS IS A BETA
 Math Notebook is still being built and is updated often. Help > Check for updates asks
 GitHub whether a newer version is out (Settings > Writing can do it at each start; it is off
-unless you turn it on). Nothing is downloaded by itself: unzip the new version yourself and
-copy your "data" folder into it to keep your settings.
+unless you turn it on). To update, close Math Notebook, extract the new zip into a new folder,
+and copy the old "data" folder into it to keep your settings and imported PDFs.
 Ctrl+T turns an equation back into plain text, Ctrl+L into LaTeX text; Ctrl+Shift+E makes
 it an equation again. When the cursor comes to an equation it is said as plain text (in
 focus mode NVDA reads only its start; NVDA+Space and MathCAT read it whole).
@@ -74,5 +75,11 @@ can be explored by sound (Enter on the graph line). Without AI, two things canno
 pictures (their place is marked), and pages that are scans or whose maths is drawn as shapes
 (the page says so). The full Math Notebook with its AI add-on can read those.
 
+OPTIONAL TOOLS
+Install Tectonic separately to compare supported PDF equations against the page.
+Tectonic downloads TeX packages when first used. Install BrailleBlaster separately
+for File > Export as braille (BRF). The full user guide explains both tools.
+
 NEEDS
-64-bit Windows 10 or 11. Microsoft Word is not needed, also not for exporting to Word.
+64-bit Windows 10 or 11. You can export Word files without Microsoft Word.
+Windows may show a warning because the executable is unsigned.

@@ -9,8 +9,8 @@ ONNX Runtime: https://github.com/microsoft/onnxruntime
 
 OpenStax textbook demo images in demo-images/:
 Eight real textbook coordinate-plane graphs included in demo-images/ (`openstax-quadrant1-piecewise.jpg`, `openstax-quadrant1-slope.jpg`, `openstax-asymmetric-sqrt.jpg`, `openstax-absolute-value.jpg`, `openstax-intersecting-lines.jpg`, `openstax-parabola-vertex.jpg`, `openstax-cubic-polynomial.jpg`, and `openstax-ellipse-annotated.jpg`) originate from OpenStax College Algebra / Precalculus / Intermediate Algebra (Rice University).
-- Textbook content license: Creative Commons Attribution 4.0 International (CC BY 4.0). Attribution: "Access for free at https://openstax.org" (OpenStax, Rice University).
-- Source media bundle repository: https://github.com/openstax/osbooks-college-algebra-bundle (repository bundle LICENSE declares CC BY-NC-SA 4.0; individual module/figure attributions and exact URLs are documented in `demo-images/SOURCES.md`).
+- These eight images are unchanged copies from the OpenStax media bundle. Its license is Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0): https://github.com/openstax/osbooks-college-algebra-bundle/blob/main/LICENSE
+- See `demo-images/SOURCES.md` for book links, individual image sources and attribution.
 
 The remaining 14 images in demo-images/ (`circle-0.png`, `empty-0.png`, `no_grid-0.png`, `parabola-0.png`, `parabola-1.png`, `person-0.png`, `table-0.png`, `tree-0.png`, `quadrant1-line-0.png`, `quadrant2-curve-0.png`, `zoomed-out-0.png`, `zoomed-in-0.png`, `angled-photo-0.png`, and `angled-whiteboard-0.png`) were generated locally for this prototype with Pillow and OpenCV. Their reference formulas and axis bounds are documented in `demo-images/SOURCES.md` and `README.txt`. These reference formulas are never passed into the image reader.
 

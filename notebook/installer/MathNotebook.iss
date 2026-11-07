@@ -1,9 +1,9 @@
-; Math Notebook setup (Inno Setup 6). Built by notebook\build_release.py, which first makes the
-; portable build and then runs:  ISCC /DAppVersion=x.y.z /DSourceDir=...\dist\Math Notebook MathNotebook.iss
+; Math Notebook setup (Inno Setup 7). Built by notebook\build_release.py, which first makes the
+; portable build and then runs: ISCC -dAppVersion=x.y.z "-dSourceDir=...\dist\Math Notebook" MathNotebook.iss
 ; Only standard Windows controls, so NVDA reads every page, button and checkbox.
 
 #ifndef AppVersion
-  #error Give the version: /DAppVersion=x.y.z (build_release.py reads it from notebook\VERSION)
+  #error Give the version: -dAppVersion=x.y.z (build_release.py reads it from notebook\VERSION)
 #endif
 #ifndef SourceDir
   #define SourceDir "..\..\dist\Math Notebook"
@@ -50,7 +50,7 @@ OutputBaseFilename=Math-Notebook-Setup
 
 [Messages]
 WelcomeLabel1=Install Math Notebook {#AppVersion}
-WelcomeLabel2=This is a beta version. Math Notebook is still being built and is updated often, so things may change, and some parts are not finished or not fully tested yet. Newer versions are on the project's GitHub Releases page.%n%nThis puts Math Notebook on this computer, with a Start menu shortcut and an uninstaller in Windows' Installed apps.%n%nThis version has no AI add-on: PDFs are read by exact rules on this computer, and nothing is sent anywhere.%n%nYour settings and imported PDFs are kept in your AppData folder, so a newer version keeps them.%n%nIt is not code-signed, so a Windows warning before this window is expected.
+WelcomeLabel2=This is a beta version. Math Notebook is still being built and is updated often, so things may change, and some parts are not finished or not fully tested yet. Newer versions are on the project's GitHub Releases page.%n%nThis puts Math Notebook on this computer, with a Start menu shortcut and an uninstaller in Windows' Installed apps.%n%nPDFs are read locally without AI. Help > Open the user guide explains update checks, optional PDF equation checking with Tectonic, and braille export with BrailleBlaster.%n%nYour settings and imported PDFs are kept in your AppData folder, so a newer version keeps them.%n%nIt is not code-signed, so a Windows warning before this window is expected.
 FinishedLabel=Math Notebook is installed. Find it in the Start menu under Math Notebook.
 
 [Tasks]
@@ -109,9 +109,9 @@ begin
       mbConfirmation, MB_YESNO) = IDYES;
   if CurUninstallStep = usPostUninstall then
   begin
-    // Python's cache files are not data; they always go.
-    DelTree(DataDir() + '\cache', True, True, True);
+    // Python's cache mirrors absolute source paths and can exceed Windows' 260-character limit.
+    DelTree(PathConvertNormalToSuper(DataDir() + '\cache'), True, True, True);
     if not KeepData then
-      DelTree(DataDir(), True, True, True);
+      DelTree(PathConvertNormalToSuper(DataDir()), True, True, True);
   end;
 end;

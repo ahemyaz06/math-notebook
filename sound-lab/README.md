@@ -6,7 +6,7 @@ Use it to try the sound profiles, or to work on the sounds without the whole not
 ## Start
 
 Double-click `Start Sound Lab.cmd` (needs Node.js). It opens http://127.0.0.1:4180/ in your
-browser. Press **S** for settings and **?** for the keys.
+browser. Tab to the Stereo Sound Pad. Press **S** for settings and **?** for the keys.
 
 ## How a graph sounds
 
@@ -25,6 +25,9 @@ browser. Press **S** for settings and **?** for the keys.
   and a slide through a sharp corner (down then up for a valley, up then down for a peak).
   In Math Notebook, Settings > Graph sound > Dots and corners can switch back to the original
   dot sounds.
+
+The app estimates points of interest by sampling the curve. It can miss details on a narrow
+or unusual graph.
 
 ## Files
 

@@ -119,8 +119,12 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 2 and parts[0] == 'doc':
             doc_id = parts[1]
             meta = core.load_meta(doc_id)
-            pages = [core.load_page(doc_id, n) for n in range(1, meta['pages'] + 1)]
-            return self._send(200, {'meta': meta, 'status': self.server.reader.snapshot(doc_id),
+            status = self.server.reader.snapshot(doc_id)
+            # While reading, an old cached page may be waiting to be checked again.
+            # An idle document can still serve its cached pictures after a restart.
+            numbers = range(1, meta['pages'] + 1) if status['state'] == 'idle' else sorted(status['done'])
+            pages = [core.load_page(doc_id, n) for n in numbers]
+            return self._send(200, {'meta': meta, 'status': status,
                                     'pages': [p for p in pages if p]})
         if len(parts) == 4 and parts[0] == 'doc' and parts[2] == 'image':
             name = parts[3]

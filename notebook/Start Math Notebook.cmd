@@ -7,7 +7,7 @@ if not exist "..\recognition-lab\.venv\Scripts\python.exe" (
   exit /b 1
 )
 if not exist "..\node_modules\electron\dist\electron.exe" (
-  echo The desktop window is not installed. In the graphing folder run: npm install
+  echo The desktop window is not installed. Run npm ci from the repository root.
   pause
   exit /b 1
 )

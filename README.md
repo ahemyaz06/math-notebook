@@ -1,9 +1,8 @@
 # Math Notebook
 
-A notebook for blind students doing maths, built for the NVDA screen reader with MathCAT and
-used from the keyboard. Write notes and homework like in Word, with every equation stored as
-real maths that NVDA and MathCAT read aloud. Open course PDFs and LaTeX files. Explore graphs
-by sound. Hand in Word or PDF files that everyone else can open.
+A Windows notebook for blind students doing maths with NVDA and MathCAT. Use the keyboard
+to write notes and homework, enter equations, and explore graphs by sound. You can import
+course PDFs and LaTeX files and export your work as Word or PDF.
 
 Everything runs on your own computer. Nothing is sent anywhere, except one question to GitHub
 when you check for a newer version (below), and, only if you install Tectonic for the optional
@@ -13,20 +12,13 @@ relying on it.
 
 ## In this README
 
-Each section in a sentence; the details follow in the same order.
-
-- **What is in this repository**: three folders. The notebook is the app; the two labs are parts it uses.
-- **Download it (Windows)**: a setup or a portable zip from Releases, and the Windows warnings
-  you will see because the app is not code-signed.
-- **Running from this folder**: what to install to run it from the source code.
-- **First minutes in the notebook**: the keys for writing, equations, comments, intervals,
-  spelling and graphs.
-- **The optional AI add-on**: only for describing pictures; how to add it.
-- **Checking equations with Tectonic**: an optional double check of PDF reading, installed separately.
-- **Braille**: braille files with BrailleBlaster.
-- **What is tested and what is not**: what the automatic tests check, what has been heard with
-  NVDA, and what has not been tried.
-- **Privacy and safety**, **Licence**.
+- [Download it for Windows](#download-it-windows)
+- [Run from source](#running-from-this-folder-windows)
+- [First minutes with NVDA](#first-minutes-in-the-notebook-with-nvda)
+- [Optional AI add-on](#the-optional-ai-add-on)
+- [PDF equation checking](#checking-equations-with-tectonic-optional)
+- [Braille export](#braille)
+- [What has been tested](#what-is-tested-and-what-is-not)
 
 ## What is in this repository
 
@@ -38,7 +30,7 @@ Each section in a sentence; the details follow in the same order.
 
 The notebook needs the other two folders, so keep them together.
 
-What has changed since the last release: [`notebook/CHANGELOG.md`](notebook/CHANGELOG.md).
+See the [0.7.6 changelog](notebook/CHANGELOG.md) for changes since 0.7.5.
 
 ## Download it (Windows)
 
@@ -49,15 +41,19 @@ page; Settings > Writing can do this each time the app starts (off unless you tu
 Nothing is downloaded or installed by itself: a newer setup is run by you, installs over the
 old one and keeps your settings.
 
-This repository's **Releases** page has two ways to get the same app. Neither has the AI
-add-on, which only matters for describing pictures.
+The [Releases page](https://github.com/ahemyaz06/math-notebook/releases) offers an installer
+and a portable zip for 64-bit Windows 10 and 11. Both read supported PDFs without the AI
+add-on. Version 0.7.6 adds optional PDF equation checking with Tectonic and braille export
+with BrailleBlaster. Install those tools separately if you need them.
 
 - `Math-Notebook-Setup.exe` installs it: a Start menu shortcut, an uninstaller in
   Installed apps, and newer versions install over older ones and keep your settings. It
   installs for you only (no administrator needed) unless you choose all users.
 - `Math-Notebook-portable.zip` needs no install: unzip it anywhere (even a USB stick) and run
   `Math Notebook.exe`. Its settings stay in a `data` folder beside it. `Read me first.txt`
-  inside explains the rest.
+  inside explains how to start and update it.
+
+In either version, choose Help > Open the user guide for the full instructions.
 
 The app is not code-signed, so Windows may warn before it runs the setup or the exe.
 SmartScreen's "Windows protected your PC": choose "More info", then "Run anyway". An "Open
@@ -66,18 +62,22 @@ File - Security Warning" dialog ("The publisher could not be verified"): choose 
 
 ## Running from this folder (Windows)
 
-1. Install [Node.js](https://nodejs.org/) (version 20 or newer) and [Python 3.12](https://www.python.org/).
+1. Install [Node.js](https://nodejs.org/) (version 22.12 or newer) and [Python 3.12](https://www.python.org/).
 2. Open a terminal in this folder and run:
 
    ```
-   npm install
+   npm ci
    py -3.12 -m venv recognition-lab\.venv
-   recognition-lab\.venv\Scripts\python.exe -m pip install -r recognition-lab\requirements.txt
+   .\recognition-lab\.venv\Scripts\python.exe -m pip install -r recognition-lab\requirements.txt
    ```
 
 3. Start the notebook: `notebook\Start Math Notebook.cmd`.
    - Sound Lab: `sound-lab\Start Sound Lab.cmd` (needs only Node.js).
    - Recognition Lab: `recognition-lab\Start Recognition Lab.cmd`.
+
+To build both Windows packages after setting up the source, install [Inno Setup 7](https://jrsoftware.org/isinfo.php)
+and run `.\recognition-lab\.venv\Scripts\python.exe notebook\build_release.py`. The installer,
+portable zip and SHA-256 checksums go into `dist`.
 
 ## First minutes in the notebook (with NVDA)
 
@@ -110,28 +110,26 @@ The full guide is [notebook/README.md](notebook/README.md).
 
 ## The optional AI add-on
 
-Most course PDFs (made with LaTeX) are read exactly, by rules, without any AI. A local vision
-model is only for describing pictures and for pages whose maths is stored as images. It needs a
-graphics card with about 8 GB of memory. Without it, everything else works.
+The notebook can read maths from many LaTeX PDFs using the text already in the file.
+The optional AI can read scanned pages or describe pictures. It can miss or misread details
+and needs a graphics card with about 8 GB of memory.
 
-To add it (about 6 GB of downloads, from GitHub and Hugging Face):
+From the main folder, run the first command to get the runner and one model. The second
+command is optional and downloads another model (about 6.6 GB):
 
 ```
-recognition-lab\.venv\Scripts\python.exe recognition-lab\download_vlm.py
-recognition-lab\.venv\Scripts\python.exe recognition-lab\download_qwen35_9b.py
+.\recognition-lab\.venv\Scripts\python.exe recognition-lab\download_vlm.py
+.\recognition-lab\.venv\Scripts\python.exe recognition-lab\download_qwen35_9b.py
 ```
 
-The first gets the llama.cpp runner and Qwen3-VL-8B; the second adds Qwen3.5-9B, which reads
-better. Then choose the reading model in the notebook's Settings > Reading PDFs.
+Choose Qwen3-VL-8B or, if you added it, Qwen3.5-9B in Settings > Reading PDFs.
 
 ## Checking equations with Tectonic (optional)
 
-The notebook can check every equation it reads from a PDF: it typesets the reading again with
-[Tectonic](https://tectonic-typesetting.github.io/) and compares it with the page, and when
-they differ it tries readings close to it and keeps one only if it matches the page exactly.
-**Tectonic was tested with Math Notebook (version 0.17.0) but is not bundled** with it or with
-the setup. Without it, PDFs are read exactly as before; nothing is checked. If you want
-everything double-checked, install Tectonic separately
+For supported PDF pages read without AI, the notebook can use
+[Tectonic](https://tectonic-typesetting.github.io/) to draw the equations again and compare
+them with the page. It can correct some misreadings. Review important equations against the
+original PDF. Install Tectonic separately
 ([installation](https://tectonic-typesetting.github.io/book/latest/installation/); for Windows,
 the zip from its [releases page](https://github.com/tectonic-typesetting/tectonic/releases))
 and put `tectonic.exe` on your PATH or set the environment variable `TECTONIC` to its full path.
@@ -172,7 +170,7 @@ Nemeth in BrailleBlaster's Translation settings. The approach follows Owen Petro
 ## Privacy and safety
 
 - The apps listen only on this computer (127.0.0.1) and refuse requests from other websites.
-- Opened documents and pasted text can never run code: they pass an allow-list cleaner.
+- The notebook filters imported documents and pasted text before adding them to the editor.
 - The app goes online only to check for a newer version: when you choose Help > Check for
   updates, or at each start if you turned that on in Settings > Writing. It asks GitHub's public
   "latest release" address once; nothing about you or your documents is sent.

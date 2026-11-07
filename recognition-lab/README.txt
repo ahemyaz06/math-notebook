@@ -67,21 +67,16 @@ Source text can have broken PDF font encodings. Nearby text is not a verified
 question association. AI prose remains unverified, and can omit or invent
 qualitative details even when its JSON response is valid.
 
-0.7.0 introduces Qwen3.5-9B (Q4_K_M, 6.6 GB VRAM footprint) with multi-profile
-support alongside legacy Qwen3-VL-8B. PID-scoped server management and /props
-verification protect external local models. A two-layer Decision Model Referee
-triages candidate regions before heavy VLM calls, curve-severing in OCR text
-masking is eliminated, and layout tables are rejected with captions linked.
+The optional AI supports several local Qwen models. Recognition Lab screens
+possible graphs before asking the model to describe them. Quality mode can
+also use the layout model to help rule out tables.
 
 Validation
 
-102 automated regression tests passed (3 skipped), and all 17 classical image
-benchmarks passed with zero regressions. Live Qwen3.5-9B qualitative inference
-was validated on parabola-0.png in 8.91 seconds. Real university calculus
-course notes from the course notes folder and open-source APEX
-calculus textbooks were benchmarked across 6 boundary suites (results recorded
-in outputs/pdf-boundary-tests/boundary_test_results.json). Real course PDF
-evaluation was performed; actual NVDA speech usability testing was not tested.
+The changelog records which tests were run for each version. An earlier timing
+reported for Qwen3.5-9B may have used the older model. Earlier PDF benchmark
+reports also undercounted successful graph readings and paths. These results
+do not establish accuracy across course PDFs. Actual NVDA speech is untested.
 
 Setup and image reading
 

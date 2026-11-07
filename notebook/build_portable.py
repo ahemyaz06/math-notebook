@@ -30,7 +30,7 @@ BASE_PYTHON = Path(sys.base_prefix)  # the Python this venv was made from
 
 # What the reader imports (pdf_inspector needs OpenCV and NumPy, the reader pdfplumber and PDFium).
 PACKAGES = ['pypdfium2', 'pdfplumber', 'opencv-python', 'numpy']
-NOTEBOOK_FILES = ['server.py', 'notebook_core.py', 'pdf_text_reader.py', 'reading_check.py', 'checker.py', 'settings.py', 'attachments.py', 'spelling.py', 'braille.py', 'README.md', 'VERSION']
+NOTEBOOK_FILES = ['server.py', 'notebook_core.py', 'pdf_text_reader.py', 'reading_check.py', 'checker.py', 'settings.py', 'attachments.py', 'spelling.py', 'braille.py', 'README.md', 'CHANGELOG.md', 'VERSION']
 VERSION = (NOTEBOOK / 'VERSION').read_text(encoding='utf-8').strip()  # the one place the version is set
 LAB_FILES = ['pdf_inspector.py', 'vector_graph.py']
 # Parts of the standard library a reading server never uses.
@@ -110,6 +110,8 @@ def build_python():
 
 
 def build():
+    if (OUT / 'data').exists():
+        raise SystemExit(f'Move your portable data folder out of {OUT} before rebuilding.')
     if OUT.exists():
         shutil.rmtree(OUT)
     # The window: Electron with only the English language files, renamed.
@@ -127,7 +129,7 @@ def build():
         shutil.copy2(NOTEBOOK / name, APP / 'notebook' / name)
     # The guide without its notes for developers (the tests are not in the build).
     guide = APP / 'notebook' / 'README.md'
-    guide.write_text(re.sub(r'\n?', '', guide.read_text(encoding='utf-8'), flags=re.S), encoding='utf-8')
+    guide.write_text(re.sub(r'<!-- dev -->.*?<!-- /dev -->\n?', '', guide.read_text(encoding='utf-8'), flags=re.S), encoding='utf-8')
     copy_tree(NOTEBOOK / 'web', APP / 'notebook' / 'web')
     copy_tree(NOTEBOOK / 'desktop', APP / 'notebook' / 'desktop')
     (APP / 'notebook' / 'PORTABLE').write_text('This copy runs without AI. See "Read me first.txt".\n', encoding='utf-8')
@@ -136,6 +138,7 @@ def build():
         shutil.copy2(ROOT / 'recognition-lab' / name, APP / 'recognition-lab' / name)
     copy_tree(ROOT / 'sound-lab' / 'public', APP / 'sound-lab' / 'public')
     copied = build_python()
+    shutil.copy2(ROOT / 'LICENSE', OUT / 'Math Notebook License.txt')
     shutil.copy2(NOTEBOOK / 'portable-readme.txt', OUT / 'Read me first.txt')
     return copied
 

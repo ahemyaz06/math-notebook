@@ -60,7 +60,6 @@ export function addCoordinate(value, delta) {
 
 export function formatNumber(value) {
   if (!Number.isFinite(value)) return 'undefined';
-  if (Math.abs(value) <= 1e-12) return '0';
   return Number(value.toPrecision(6)).toString();
 }
 
@@ -244,6 +243,25 @@ export function compileExpression(source) {
   };
 }
 
+function holeLimit(fn, x) {
+  const minDistance = 32 * Number.EPSILON * Math.abs(x);
+  for (const d of new Set([Math.max(1e-6, minDistance), Math.max(1e-10, minDistance)])) {
+    const values = [fn(x - d), fn(x + d), fn(x - 100 * d), fn(x + 100 * d)];
+    if (!values.every(Number.isFinite)) return null;
+    const [left, right, farLeft, farRight] = values;
+    const near = Math.max(Math.abs(left), Math.abs(right));
+    const far = Math.max(Math.abs(farLeft), Math.abs(farRight));
+    // A limit can settle at a nonzero height, or shrink towards zero on both
+    // sides. Compare at the function's scale: even a small multiple of a pole
+    // grows as you approach it. Check closer in if a small limit has not settled.
+    const scale = Math.max(near, far);
+    if (near <= far / 4 || values.every((v) => Math.abs(v - left) <= scale / 1000)) {
+      return Number((left / 2 + right / 2).toPrecision(10));
+    }
+  }
+  return null;
+}
+
 export function compileEquation(value) {
   const cleaned = String(value || '')
     .trim()
@@ -284,17 +302,8 @@ export function compileEquation(value) {
     limitAt(x) {
       const direct = explicit.evaluate({ x });
       if (Number.isFinite(direct)) return { defined: true, y: direct };
-      // A hole needs one finite two-sided limit. Checking at two distances
-      // separates a hole such as (x^2-4)/(x-2) from a symmetric pole such as
-      // 1/x^2, whose two sides agree with each other but grow without bound.
-      const near = [1e-6, 1e-4].map((eps) => [explicit.evaluate({ x: x - eps }), explicit.evaluate({ x: x + eps })]);
-      const values = near.flat();
-      const agree = (a, b) => Math.abs(a - b) <= 1e-3 * (1 + Math.max(Math.abs(a), Math.abs(b)));
-      if (values.every(Number.isFinite) && values.every((v) => agree(v, values[0]))) {
-        const [leftY, rightY] = near[0];
-        return { defined: false, hole: true, y: Number(((leftY + rightY) / 2).toPrecision(10)) };
-      }
-      return { defined: false, hole: false, y: NaN };
+      const y = holeLimit((v) => explicit.evaluate({ x: v }), x);
+      return { defined: false, hole: y !== null, y: y ?? NaN };
     },
   };
 }
@@ -303,101 +312,109 @@ function refineZeroOfFn(fn, left, right) {
   let a = left;
   let b = right;
   let fa = fn(a);
-  let fb = fn(b);
+  const fb = fn(b);
   if (!Number.isFinite(fa) || !Number.isFinite(fb)) return null;
-  if (Math.abs(fa) <= 1e-12) return a;
-  if (Math.abs(fb) <= 1e-12) return b;
+  if (fa === 0) return a;
+  if (fb === 0) return b;
   if (Math.sign(fa) === Math.sign(fb)) return null;
-  for (let i = 0; i < 60; i += 1) {
-    const mid = (a + b) / 2;
+  const startScale = Math.max(Math.abs(fa), Math.abs(fb));
+  let best = Math.abs(fa) < Math.abs(fb) ? a : b;
+  let smallest = Math.min(Math.abs(fa), Math.abs(fb));
+  for (let i = 0; i < 64; i += 1) {
+    const mid = a + (b - a) / 2;
+    if (mid === a || mid === b) break;
     const fm = fn(mid);
     if (!Number.isFinite(fm)) return null;
-    if (Math.abs(fm) <= 1e-13 || mid === a || mid === b) return mid;
+    if (fm === 0) return mid;
+    if (Math.abs(fm) < smallest) {
+      best = mid;
+      smallest = Math.abs(fm);
+    }
     if (Math.sign(fa) === Math.sign(fm)) {
       a = mid;
       fa = fm;
     } else {
       b = mid;
-      fb = fm;
     }
   }
-  const candidate = (a + b) / 2;
-  const fc = fn(candidate);
-  return Number.isFinite(fc) && Math.abs(fc) <= 1e-5 ? Number(candidate.toPrecision(12)) : null;
+  // A change of sign across a jump or pole is not evidence of a root. The values
+  // must also approach zero, even when the whole function is very small or large.
+  return smallest / startScale < 1e-8 ? best : null;
+}
+
+function refineTouchOfFn(fn, left, center, right) {
+  let lo = left;
+  let hi = right;
+  let best = center;
+  let smallest = Math.abs(fn(center));
+  for (let i = 0; smallest !== 0 && i < 96; i += 1) {
+    const p = lo + (hi - lo) / 3;
+    const q = hi - (hi - lo) / 3;
+    if (p === lo || q === hi || p >= q) break;
+    const yp = Math.abs(fn(p));
+    const yq = Math.abs(fn(q));
+    if (!Number.isFinite(yp) || !Number.isFinite(yq)) return null;
+    if (yp < smallest || yq < smallest) {
+      best = yp <= yq ? p : q;
+      smallest = Math.min(yp, yq);
+    }
+    if (yp < yq) hi = q;
+    else lo = p;
+  }
+  if (smallest === 0) return best;
+  // A touching root may lie between two representable numbers (sin(x)^2 near pi).
+  // Accept a nonzero minimum only if its residual is tiny compared with the values
+  // a few representable x positions away. A small positive floor stays positive.
+  const dx = Math.max(Number.MIN_VALUE, 8 * Number.EPSILON * Math.abs(best));
+  const neighbours = [Math.abs(fn(best - dx)), Math.abs(fn(best + dx))];
+  return neighbours.every((v) => Number.isFinite(v) && smallest < v / 16) ? best : null;
 }
 
 export function detectLandmarks(graph, boundary = 10, customPoints = []) {
   const landmarks = [];
   const addLandmark = (kind, x, y, label) => {
     if (!Number.isFinite(x) || Math.abs(x) > boundary + 1e-9) return;
-    const cleanX = Math.abs(x) <= 1e-10 ? 0 : Number(x.toPrecision(10));
-    const cleanY = Number.isFinite(y) ? (Math.abs(y) <= 1e-10 ? 0 : Number(y.toPrecision(10))) : null;
+    const cleanX = Number(x.toPrecision(10));
+    const cleanY = Number.isFinite(y) ? Number(y.toPrecision(10)) : null;
     const existing = landmarks.find((item) => Math.abs(item.x - cleanX) <= 1e-5 && item.kind === kind);
     if (existing) return;
     landmarks.push({ kind, x: cleanX, y: cleanY, label });
   };
 
-  // 1. Detect removable discontinuities (Open Points / Holes) and vertical asymptotes from denominator checks
+  // 1. Detect holes and vertical asymptotes from denominator zeros.
   const steps = 800;
   const step = (boundary * 2) / steps;
+  const xs = Array.from({ length: steps + 1 }, (_, i) => addCoordinate(-boundary, i * step));
   for (const check of graph.domainChecks || []) {
     if (check.kind !== 'zero') continue;
     const evalDenom = (x) => check.evaluate({ x, y: 0 });
+    const values = xs.map(evalDenom);
+    if (!values.some((v) => Number.isFinite(v) && v !== 0)) continue;
+    const addBreak = (x) => {
+      const lim = graph.limitAt(x);
+      // At an off-grid denominator zero, the closest representable x can
+      // still evaluate. Probe both sides there as for an exact zero.
+      const y = lim.defined ? holeLimit((v) => graph.yAt(v), x) : lim.hole ? lim.y : null;
+      if (y !== null) {
+        addLandmark('open-point', x, y, `Open point (hole) at (${formatNumber(x)}, ${formatNumber(y)})`);
+      } else {
+        addLandmark('asymptote', x, null, `Vertical asymptote or undefined at x = ${formatNumber(x)}`);
+      }
+    };
     for (let i = 0; i <= steps; i += 1) {
-      const x = addCoordinate(-boundary, i * step);
-      const val = evalDenom(x);
-      if (Number.isFinite(val) && Math.abs(val) <= 1e-10) {
-        const lim = graph.limitAt(x);
-        if (lim.hole) {
-          addLandmark('open-point', x, lim.y, `Open point (hole) at (${formatNumber(x)}, ${formatNumber(lim.y)})`);
-        } else {
-          addLandmark('asymptote', x, null, `Vertical asymptote or undefined at x = ${formatNumber(x)}`);
-        }
+      const [before, val, after] = [values[i - 1], values[i], values[i + 1]];
+      if (!Number.isFinite(val)) continue;
+      if (val === 0 && (before !== 0 || after !== 0)) addBreak(xs[i]);
+      if (Number.isFinite(after) && val !== 0 && after !== 0 && Math.sign(val) !== Math.sign(after)) {
+        const x = refineZeroOfFn(evalDenom, xs[i], xs[i + 1]);
+        if (x !== null) addBreak(x);
       }
-      if (i > 0 && i < steps) {
-        // An even-power denominator such as (x-0.31)^2 touches zero without
-        // changing sign, so bisection never sees it. Look for |d| bottoming out.
-        const before = evalDenom(addCoordinate(-boundary, (i - 1) * step));
-        const after = evalDenom(addCoordinate(-boundary, (i + 1) * step));
-        if (
-          [before, val, after].every(Number.isFinite) &&
-          Math.abs(val) > 1e-10 &&
-          Math.abs(val) <= Math.abs(before) &&
-          Math.abs(val) <= Math.abs(after) &&
-          Math.sign(before) === Math.sign(after)
-        ) {
-          let lo = addCoordinate(-boundary, (i - 1) * step);
-          let hi = addCoordinate(-boundary, (i + 1) * step);
-          for (let iter = 0; iter < 80; iter += 1) {
-            const p = lo + (hi - lo) / 3;
-            const q = hi - (hi - lo) / 3;
-            if (Math.abs(evalDenom(p)) < Math.abs(evalDenom(q))) hi = q;
-            else lo = p;
-          }
-          const touchX = (lo + hi) / 2;
-          const scale = 1 + Math.max(Math.abs(before), Math.abs(after));
-          if (Math.abs(evalDenom(touchX)) <= 1e-9 * scale) {
-            const cleanTouch = Number(touchX.toPrecision(8));
-            const lim = graph.limitAt(cleanTouch);
-            if (lim.hole) {
-              addLandmark('open-point', cleanTouch, lim.y, `Open point (hole) at (${formatNumber(cleanTouch)}, ${formatNumber(lim.y)})`);
-            } else {
-              addLandmark('asymptote', cleanTouch, null, `Vertical asymptote or undefined at x = ${formatNumber(cleanTouch)}`);
-            }
-          }
-        }
-      }
-      if (i < steps) {
-        const nextX = addCoordinate(-boundary, (i + 1) * step);
-        const zeroX = refineZeroOfFn(evalDenom, x, nextX);
-        if (zeroX !== null) {
-          const lim = graph.limitAt(zeroX);
-          if (lim.hole) {
-            addLandmark('open-point', zeroX, lim.y, `Open point (hole) at (${formatNumber(zeroX)}, ${formatNumber(lim.y)})`);
-          } else {
-            addLandmark('asymptote', zeroX, null, `Vertical asymptote or undefined at x = ${formatNumber(zeroX)}`);
-          }
-        }
+      // An even power such as (x-0.31)^2 has a zero without a change of sign.
+      if (val !== 0 && Math.sign(val) === Math.sign(before) && Math.sign(val) === Math.sign(after) &&
+          Math.abs(val) <= Math.abs(before) && Math.abs(val) <= Math.abs(after) &&
+          (Math.abs(val) < Math.abs(before) || Math.abs(val) < Math.abs(after))) {
+        const x = refineTouchOfFn(evalDenom, xs[i - 1], xs[i], xs[i + 1]);
+        if (x !== null) addBreak(x);
       }
     }
   }
@@ -405,49 +422,35 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
   // 2. Check Origin (0,0) and Y-intercept (x = 0)
   const atZero = graph.limitAt(0);
   if (atZero.defined) {
-    if (Math.abs(atZero.y) <= 1e-9) {
+    if (atZero.y === 0) {
       addLandmark('origin', 0, 0, 'Origin (0, 0)');
     } else {
       addLandmark('y-axis', 0, atZero.y, `Y-axis crossing at (0, ${formatNumber(atZero.y)})`);
     }
-  } else if (atZero.hole && Math.abs(atZero.y) <= 1e-9) {
+  } else if (atZero.hole && atZero.y === 0) {
     addLandmark('origin', 0, 0, 'Origin (0, 0) (open hole)');
   }
 
   // 3. Sample for X-intercepts (roots) and Extrema (Peaks & Valleys)
-  const samples = Array.from({ length: steps + 1 }, (_, i) => {
-    const x = addCoordinate(-boundary, i * step);
+  const samples = xs.map((x) => {
     const lim = graph.limitAt(x);
     return { x, y: lim.defined ? lim.y : lim.hole ? lim.y : NaN, defined: lim.defined };
   });
 
   const allZero = samples.every((s) => s.y === 0);
   if (!allZero && !graph.hasSteps) {
-    for (let i = 0; i < steps; i += 1) {
+    const addRoot = (x) => {
+      if (x !== 0) addLandmark('x-axis', x, 0, `X-axis root at (${formatNumber(x)}, 0)`);
+    };
+    for (let i = 0; i <= steps; i += 1) {
       const a = samples[i];
       const b = samples[i + 1];
-      if (!Number.isFinite(a.y) || !Number.isFinite(b.y)) continue;
-      if (Math.abs(a.y) <= 1e-10) {
-        // A sample that is merely tiny is not a root: e^(-x^2) is about 1e-11
-        // near x = 5 but never zero. Accept it only where |y| actually bottoms
-        // out between two larger neighbours (a touching root such as x^2), or
-        // where y is exactly zero (sign-change roots are refined below).
-        const prev = samples[i - 1];
-        const touches =
-          a.y === 0 ||
-          (prev && Number.isFinite(prev.y) && Math.abs(prev.y) > Math.abs(a.y) && Math.abs(b.y) > Math.abs(a.y));
-        if (touches && Math.abs(a.x) > 1e-8) {
-          addLandmark('x-axis', a.x, 0, `X-axis root at (${formatNumber(a.x)}, 0)`);
-        }
-      } else if (Math.sign(a.y) !== Math.sign(b.y) && graph.isContinuousBetween(a.x, b.x)) {
+      if (!a.defined) continue;
+      if (a.y === 0) addRoot(a.x);
+      if (b?.defined && a.y !== 0 && b.y !== 0 && Math.sign(a.y) !== Math.sign(b.y) &&
+          graph.isContinuousBetween(a.x, b.x)) {
         const rootX = refineZeroOfFn((x) => graph.yAt(x), a.x, b.x);
-        if (rootX !== null) {
-          if (Math.abs(rootX) <= 1e-8) {
-            addLandmark('origin', 0, 0, 'Origin (0, 0)');
-          } else {
-            addLandmark('x-axis', rootX, 0, `X-axis root at (${formatNumber(rootX)}, 0)`);
-          }
-        }
+        if (rootX !== null) addRoot(rootX);
       }
     }
 
@@ -462,6 +465,7 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
       // A peak or valley must lie on one continuous piece. Across a pole the
       // samples only look like a turn (tan(x), 1/(x-a)); that is not an extremum.
       if (!graph.isContinuousBetween(prev.x, curr.x) || !graph.isContinuousBetween(curr.x, next.x)) continue;
+      if (landmarks.some((l) => ['open-point', 'asymptote'].includes(l.kind) && l.x >= prev.x && l.x <= next.x)) continue;
 
       let lo = prev.x;
       let hi = next.x;
@@ -485,7 +489,7 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
       // is at least as extreme, so the user hears "(0, 0)" not "(7.03e-12, 0)".
       const rounded = Number(rx.toFixed(Math.max(0, 6 - Math.ceil(Math.log10(boundary + 1)))));
       const roundedY = evalY(rounded);
-      if (Number.isFinite(roundedY) && (isMin ? roundedY <= ry + 1e-12 * (1 + Math.abs(ry)) : roundedY >= ry - 1e-12 * (1 + Math.abs(ry)))) {
+      if (Number.isFinite(roundedY) && (isMin ? roundedY <= ry : roundedY >= ry)) {
         rx = rounded;
         ry = roundedY;
       }
@@ -503,10 +507,11 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
             ry,
             `${isMax ? 'Peak (local max)' : 'Valley (local min)'} at (${formatNumber(rx)}, ${formatNumber(ry)})`
           );
-          if (Math.abs(rx) <= 1e-7 && Math.abs(ry) <= 1e-7) {
-            addLandmark('origin', 0, 0, 'Origin (0, 0)');
-          } else if (Math.abs(ry) <= 1e-7) {
-            addLandmark('x-axis', rx, 0, `X-axis root at (${formatNumber(rx)}, 0)`);
+          const scale = Math.max(Math.abs(prev.y), Math.abs(next.y));
+          if (ry === 0 && Number.isFinite(graph.yAt(rx))) addRoot(rx);
+          else if (Math.abs(ry) < scale / 100) {
+            const x = refineTouchOfFn((x) => graph.yAt(x), prev.x, rx, next.x);
+            if (x !== null) addRoot(x);
           }
         }
       }

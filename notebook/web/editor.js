@@ -17,6 +17,8 @@ const graphs = new Map();
 let filePath = null;
 let docName = 'Untitled';
 let dirty = false;
+let documentRevision = 0;
+let editRevision = 0;
 let importing = null;
 
 // ---------- small helpers ----------
@@ -28,6 +30,7 @@ function say(text) {
   setTimeout(() => { $('status').textContent = text; }, 30);
 }
 function setDirty(value) {
+  if (value) editRevision += 1;
   dirty = value;
   showMode(); // the title: name, unsaved star, Teacher mode
 }
@@ -194,6 +197,12 @@ function pageBlocks(record, docId) {
 
 // ---------- importing a PDF ----------
 
+function switchDocument() {
+  // The reader can finish caching the old PDF, but its callbacks no longer own this document.
+  documentRevision += 1;
+  importing = null;
+}
+
 async function api(path, options) {
   const response = await fetch(path, options);
   const body = await response.json().catch(() => ({}));
@@ -204,19 +213,30 @@ async function api(path, options) {
 async function importPdf(path) {
   if (!path) return;
   if (importing) { say('A PDF is already being converted. Wait for it to finish.'); return; }
+  const job = { documentRevision };
+  importing = job;
   try {
     const answer = await api('/api/open-path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
-    if (answer.notebook) { openAttachedNotebook(answer.notebook, answer.name); return; }
+    // Student preview shows a copy. Wait for the editable document before putting anything in it.
+    while (importing === job && studentView) await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (importing !== job) return;
+    if (answer.notebook) {
+      openAttachedNotebook(answer.notebook, answer.name);
+      if (importing === job) importing = null;
+      return;
+    }
     const { meta } = answer;
     if (isEmpty()) {
       docName = meta.name.replace(/\.pdf$/i, '');
       doc.replaceChildren(el('h1', {}, docName));
       setDirty(true);
     }
-    importing = { id: meta.id, next: 1, total: meta.pages, name: meta.name };
+    Object.assign(job, { id: meta.id, next: 1, total: meta.pages, name: meta.name });
     say(`Converting ${meta.name}, ${meta.pages} ${meta.pages === 1 ? 'page' : 'pages'}. Pages are added at the end as they finish; you can keep working.`);
-    pollImport();
+    pollImport(job);
   } catch (error) {
+    if (importing !== job) return;
+    importing = null;
     say(`Could not open the PDF: ${error.message}`);
   }
 }
@@ -245,36 +265,39 @@ function openAttachedNotebook(text, name) {
   say(`${name} was made with Math Notebook, so the document inside it was opened exactly as written, with no reading of the page.`);
 }
 
-async function pollImport() {
-  const job = importing;
-  if (!job) return;
+async function pollImport(job) {
+  if (importing !== job) return;
+  if (studentView) { setTimeout(() => pollImport(job), 1500); return; }
   let data;
   try {
     data = await api(`/api/doc/${job.id}`);
   } catch (error) {
+    if (importing !== job) return;
     say(`The reader stopped answering: ${error.message}`);
     importing = null;
     return;
   }
+  if (importing !== job) return;
+  if (studentView) { setTimeout(() => pollImport(job), 1500); return; }
   const ready = new Map(data.pages.map((p) => [p.page, p]));
-  while (ready.has(job.next)) {
-    for (const node of pageBlocks(ready.get(job.next), job.id)) doc.append(node);
-    if (job.next === 1) say('Page 1 is in the document. Press F8 to go to the first review note.');
+  const status = data.status || {};
+  const errors = status.errors || {};
+  // Ready pages and failed-page notes both go in page order, even when the reader finishes out of order.
+  while (ready.has(job.next) || errors[job.next]) {
+    if (ready.has(job.next)) {
+      doc.append(...pageBlocks(ready.get(job.next), job.id));
+      if (job.next === 1) say('Page 1 is in the document. Press F8 to go to the first review note.');
+    } else {
+      const p = el('p', { class: 'warned', 'data-warning': JSON.stringify([`Page ${job.next} could not be read: ${errors[job.next]}`]) }, `Page ${job.next} could not be converted.`);
+      doc.append(el('h2', { 'data-page': job.next }, `Page ${job.next}`), p);
+    }
     job.next += 1;
     setDirty(true);
   }
-  const status = data.status || {};
-  const errors = status.errors || {};
   if (errors.document) {
     say(`${job.name} could not be read: ${errors.document}`);
     importing = null;
     return;
-  }
-  // A page that failed is noted in the document and skipped so later pages still arrive.
-  while (errors[job.next] && !ready.has(job.next)) {
-    const p = el('p', { class: 'warned', 'data-warning': JSON.stringify([`Page ${job.next} could not be read: ${errors[job.next]}`]) }, `Page ${job.next} could not be converted.`);
-    doc.append(el('h2', { 'data-page': job.next }, `Page ${job.next}`), p);
-    job.next += 1;
   }
   fillWaitingFigures(job.id, ready);
   if (job.next > job.total) {
@@ -286,17 +309,21 @@ async function pollImport() {
     if (waiting) pollPictures(job);
     return;
   }
-  setTimeout(pollImport, 1500);
+  setTimeout(() => pollImport(job), 1500);
 }
 
 // After a PDF's pages are in, its waiting pictures are filled in as their descriptions arrive.
 async function pollPictures(job) {
+  if (job.documentRevision !== documentRevision) return;
+  if (studentView) { setTimeout(() => pollPictures(job), 1500); return; }
   let data;
   try {
     data = await api(`/api/doc/${job.id}`);
   } catch {
     return; // the places stay marked; nothing else is lost
   }
+  if (job.documentRevision !== documentRevision) return;
+  if (studentView) { setTimeout(() => pollPictures(job), 1500); return; }
   const filled = fillWaitingFigures(job.id, new Map(data.pages.map((p) => [p.page, p])));
   const waiting = doc.querySelectorAll(`[data-figure^="${job.id}:"]`).length;
   if (filled) say(waiting ? `${filled} more ${filled === 1 ? 'picture' : 'pictures'} described in ${job.name}.` : `All pictures in ${job.name} are described.`);
@@ -394,6 +421,7 @@ function sanitizeInto(target, html) {
 function loadNotebook(text, path) {
   const data = JSON.parse(text);
   if (data.format !== 'math-notebook') throw new Error('This is not a Math Notebook file.');
+  switchDocument();
   graphs.clear();
   for (const [id, g] of Object.entries(data.graphs || {})) graphs.set(id, g);
   if (studentView) togglePreview(false);
@@ -404,16 +432,25 @@ function loadNotebook(text, path) {
   setDirty(false);
   doc.focus();
   say(`Opened ${docName}.`);
+  // A saved notebook can still contain waiting pictures. Pick up their descriptions from
+  // the reader if they are available, using a new job owned by this open document.
+  const sources = new Set([...doc.querySelectorAll('[data-figure]')]
+    .map((holder) => holder.dataset.figure.split(':')[0])
+    .filter((id) => /^[a-f0-9]{64}$/.test(id)));
+  for (const id of sources) pollPictures({ id, documentRevision, name: docName });
 }
 
 async function save(as = false) {
   if (!desktop) { say('Saving needs the desktop app.'); return; }
-  const saved = await desktop.save({ path: as ? null : filePath, name: `${docName}.mathnb`, content: serialize() });
-  if (!saved) return;
+  const target = documentRevision;
+  const content = serialize();
+  const revision = editRevision;
+  const saved = await desktop.save({ path: as ? null : filePath, name: `${docName}.mathnb`, content });
+  if (!saved || target !== documentRevision) return;
   filePath = saved;
   docName = saved.split(/[\\/]/).pop().replace(/\.mathnb$/i, '');
-  setDirty(false);
-  say(`Saved ${docName}.`);
+  setDirty(editRevision !== revision);
+  say(dirty ? `Saved ${docName}. New changes still need to be saved.` : `Saved ${docName}.`);
 }
 
 function exportHtml() {
@@ -807,7 +844,7 @@ function commitEquation() {
   try { latex = currentLatex(); } catch (error) { $('equation-error').textContent = error.message; return; }
   const { comment } = splitComment($('equation-text').value);
   $('equation-dialog').close();
-  if (!latex) return;
+  if (!latex) { doc.focus(); return; }
   const span = mathSpan(latex, equationTarget?.dataset.display === 'true');
   if (equationTarget) {
     equationTarget.replaceWith(span);
@@ -834,7 +871,12 @@ $('equation-text').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); commitEquation(); }
   if (e.key.toLowerCase() === 'l' && e.ctrlKey) { e.preventDefault(); toggleLatex(); }
 });
-$('equation-dialog').addEventListener('close', () => { if (!$('equation-dialog').returnValue) doc.focus(); });
+$('equation-dialog').addEventListener('cancel', (e) => {
+  // Return focus now. A delayed close event can arrive after graph mode takes focus.
+  e.preventDefault();
+  e.currentTarget.close();
+  doc.focus();
+});
 
 // ---------- graph from equations ----------
 
@@ -2929,6 +2971,7 @@ doc.addEventListener('click', (e) => {
 const COMMANDS = {
   new: () => {
     if (dirty && !confirm('Discard the unsaved changes?')) return;
+    switchDocument();
     const p = el('p');
     p.append(el('br'));
     doc.replaceChildren(p);
@@ -2941,9 +2984,10 @@ const COMMANDS = {
     if (file) try { loadNotebook(file.content, file.path); } catch (error) { say(`Could not open: ${error.message}`); }
   },
   importPdf: async () => {
+    const target = documentRevision;
     fetch('/api/warm', { method: 'POST' }).catch(() => {}); // model loads while the file is chosen
     const path = desktop ? await desktop.choosePdf() : prompt('PDF path');
-    importPdf(path);
+    if (target === documentRevision) importPdf(path);
   },
   save: () => save(false),
   saveAs: () => save(true),

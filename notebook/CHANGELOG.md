@@ -2,10 +2,19 @@
 
 Earlier versions are described on the [releases page](https://github.com/ahemyaz06/math-notebook/releases).
 
-## Not yet released (after 0.7.5)
+## 0.7.6 (beta)
 
-These changes are in the source code here. They are not yet in a setup or portable download;
-the next release will have them.
+Changes since 0.7.5. The Windows setup and portable zip both use the local PDF reader.
+Tectonic for optional PDF equation checking and BrailleBlaster for BRF export are separate installs.
+
+### Fixes to PDF import and graph descriptions
+
+- Pages and picture descriptions from an earlier import stay out of the new document when
+  you open or start another notebook.
+- If the same equation appears twice, the PDF check corrects only the occurrence it matched.
+  Enabling the check or installing Tectonic also lets it check pages that were read without it.
+- Very small nonzero values and tall but finite peaks are less likely to be called zeros or
+  vertical asymptotes in graph descriptions.
 
 ### Reading PDFs: far fewer misreadings
 
@@ -41,9 +50,9 @@ Fixed, among others:
 
 ### Optional: checking each equation against the page (Tectonic)
 
-With [Tectonic](https://tectonic-typesetting.github.io/) installed separately, every equation
-read from a PDF is typeset again and compared with the page; an equation that does not match
-is replaced only by a nearby reading that matches the page exactly. Tested with Tectonic
+With [Tectonic](https://tectonic-typesetting.github.io/) installed separately, the notebook
+can draw the equations it reads without AI and compare them with the PDF page. It can correct
+some misreadings. Tested with Tectonic
 0.17.0 but **not bundled**. Settings > Reading PDFs, "Check each equation" (on by default; it
 does nothing without Tectonic). See "Checking equations with Tectonic" in the main README.
 

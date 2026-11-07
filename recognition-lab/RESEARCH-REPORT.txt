@@ -12,7 +12,7 @@ The first detailed detector runs covered 256 images: 48 development examples, 80
 
 In v0.3.0, the local demo-images benchmark suite was expanded from 8 images to 22 diverse images (documented in demo-images/SOURCES.md):
 - 8 original synthetic fixtures (5 positive coordinate planes: parabola-0.png, parabola-1.png, circle-0.png, no_grid-0.png, empty-0.png; 3 negative controls: person-0.png, table-0.png, tree-0.png).
-- 8 real OpenStax Precalculus textbook figures (CC BY 4.0): openstax-parabola-vertex.jpg, openstax-intersecting-lines.jpg, openstax-absolute-value.jpg, openstax-cubic-polynomial.jpg, openstax-quadrant1-piecewise.jpg, openstax-quadrant1-slope.jpg, openstax-asymmetric-sqrt.jpg, openstax-ellipse-annotated.jpg.
+- 8 figures from the OpenStax textbook media bundle (CC BY-NC-SA 4.0): openstax-parabola-vertex.jpg, openstax-intersecting-lines.jpg, openstax-absolute-value.jpg, openstax-cubic-polynomial.jpg, openstax-quadrant1-piecewise.jpg, openstax-quadrant1-slope.jpg, openstax-asymmetric-sqrt.jpg, openstax-ellipse-annotated.jpg.
 - 6 synthetic perspective-angled, zoomed, and quadrant-specific challenges: angled-whiteboard-0.png, angled-photo-0.png, quadrant1-line-0.png, quadrant2-curve-0.png, zoomed-out-0.png, zoomed-in-0.png.
 
 Conventions found in the inspected examples
@@ -74,7 +74,7 @@ Unreadable scales produce no numerical coordinates. Text recognized from an imag
 
 Files and sources
 
-OpenStax, Rice University (CC BY 4.0 / CC BY-NC-SA 4.0):
+OpenStax media bundle, Rice University (CC BY-NC-SA 4.0):
 - https://openstax.org/books/precalculus-2e
 - https://github.com/openstax/osbooks-college-algebra-bundle
 See demo-images/SOURCES.md and THIRD-PARTY-NOTICES.txt for per-image attributions and licenses.

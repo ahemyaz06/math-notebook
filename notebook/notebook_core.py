@@ -56,6 +56,7 @@ FIGURE_POOL = ThreadPoolExecutor(4, thread_name_prefix='figure')
 # detail at 1,024 tokens, so larger pictures do not add detail.
 PAGE_PIXELS = int(os.environ.get('MATH_NOTEBOOK_PAGE_PIXELS', '1024'))
 PROMPT_VERSION = 2
+TYPESET_CHECK_VERSION = 1  # corrections now use the formula's exact position in the reading
 PROMPT = (
     "Transcribe this math course page exactly into Markdown. "
     "Write every mathematical expression in LaTeX, using $...$ inline and $$...$$ on their own lines for display math. "
@@ -118,14 +119,15 @@ def page_path(doc_id, number):
     return document_dir(doc_id) / 'pages' / f'{number}.json'
 
 
-def load_page(doc_id, number):
+def load_page(doc_id, number, *, retry_check=False):
     p = page_path(doc_id, number)
-    if not p.exists():
-        return None
-    page = json.loads(p.read_text(encoding='utf-8'))
+    with PAGE_LOCK:
+        if not p.exists():
+            return None
+        page = json.loads(p.read_text(encoding='utf-8'))
     if page.get('blank'):
         return page  # found blank without the AI; nothing to check
-    if not still_valid(page):
+    if not still_valid(page, retry_check=retry_check):
         return None  # made another way than Settings now asks, or with an older reader: read again
     if 'pdf_text' in page:
         # Checking needs no AI, so it is redone each time and checker fixes apply at once.
@@ -133,12 +135,24 @@ def load_page(doc_id, number):
     return page
 
 
-def still_valid(page):
+def still_valid(page, *, retry_check=False):
     method = app_settings.get('reading_method')
     if page.get('method') == 'text':
         if page.get('needs_ai'):
             return method == 'text'  # "only the AI can read it": read it once the AI is allowed
-        return method != 'ai' and page.get('reader_version') == pdf_text_reader.VERSION
+        if method == 'ai' or page.get('reader_version') != pdf_text_reader.VERSION:
+            return False
+        current_check = page.get('typeset_check_version') == TYPESET_CHECK_VERSION
+        checked = page.get('typeset_check', {})
+        if not current_check and checked.get('fixed'):
+            return False  # an older correction may have changed a different formula
+        if retry_check and page.get('has_equations', True):
+            # A check that could not typeset anything may have failed because its TeX
+            # installation was incomplete. Retry on the next import, not on every poll.
+            compared = any(checked.get(verdict) for verdict in ('same', 'fixed', 'differs'))
+            if (not current_check or not compared) and reading_check_available():
+                return False
+        return True
     if page.get('prompt_version') != PROMPT_VERSION or page.get('model') not in models():
         return False
     # In automatic mode an AI copy is kept only for a page the text reader cannot read.
@@ -573,7 +587,9 @@ def read_by_text(source, number, found, pdf_text, math_fonts):
         marks = [{'bbox': f['bbox'], 'marker': '[FIGURE type=coordinate_graph]' if f['exact'] else '[FIGURE type=other]'}
                  for f in keep]
         result = pdf_text_reader.read_page(page, marks)
-        checked = check_readings(page, result)
+        has_equations = bool(result['equations'])
+        check_requested = has_equations and reading_check_available()
+        checked = check_readings(page, result) if check_requested else None
     before = result['markdown'].split('\n')
     markdown = drop_page_number(result['markdown'], pdf_text)
     after = markdown.split('\n')
@@ -592,24 +608,29 @@ def read_by_text(source, number, found, pdf_text, math_fonts):
     record = {'page': number, 'markdown': markdown, 'pdf_text': pdf_text, 'figures': figures,
               'method': 'text', 'reader_version': pdf_text_reader.VERSION, 'reader_notes': notes,
               'model': None, 'prompt_version': PROMPT_VERSION, 'has_text_layer': True, 'math_fonts': math_fonts,
-              'seconds': round(time.perf_counter() - started, 2)}
+              'seconds': round(time.perf_counter() - started, 2), 'has_equations': has_equations}
+    if check_requested:
+        # A failed check still leaves a page the editor can load.
+        record['typeset_check_version'] = TYPESET_CHECK_VERSION
     if checked:
         record['typeset_check'] = checked
     record['check'] = page_check(record)
     return record
 
 
+def reading_check_available():
+    if not app_settings.get('check_readings'):
+        return False
+    import reading_check
+    return bool(reading_check.find_tectonic())
+
+
 def check_readings(page, result):
     """Each equation the reader read, typeset again and compared with the page (reading_check);
     readings that a nearby one matches better are replaced in result['markdown']. Returns how
-    many were the same, fixed, or still different, or None when not checked (the setting is
-    off, Tectonic is not there, or the check failed: the reading then stays as it is)."""
-    if not app_settings.get('check_readings') or not result.get('equations'):
-        return None
+    many were the same, fixed, or still different, or None if the check failed."""
     try:
         import reading_check
-        if not reading_check.find_tectonic():
-            return None
         results = reading_check.check_page(page, result['equations'])
         result['markdown'] = reading_check.fix_markdown(result['markdown'], result['equations'], results)
         counts = {}
@@ -624,7 +645,7 @@ def check_readings(page, result):
 def process_page(doc_id, number, on_stage=None, model=None, save=True, method=None):
     """Read one page (1-based) and save the result. Returns the page record."""
     if save:
-        cached = load_page(doc_id, number)
+        cached = load_page(doc_id, number, retry_check=True)
         if cached:
             return cached
     method = method or app_settings.get('reading_method')
@@ -720,8 +741,9 @@ def process_page(doc_id, number, on_stage=None, model=None, save=True, method=No
 def save_page(doc_id, record):
     target = page_path(doc_id, record['page'])
     tmp = target.with_suffix('.tmp')
-    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding='utf-8')
-    os.replace(tmp, target)
+    with PAGE_LOCK:
+        tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding='utf-8')
+        os.replace(tmp, target)
 
 
 def _score(record):
@@ -924,7 +946,7 @@ class Reader:
     def request(self, doc_id):
         meta = load_meta(doc_id)
         with self.lock:
-            loaded = {n: load_page(doc_id, n) for n in range(1, meta['pages'] + 1)}
+            loaded = {n: load_page(doc_id, n, retry_check=True) for n in range(1, meta['pages'] + 1)}
             done = [n for n, p in loaded.items() if p]
             for p in loaded.values():
                 self.figures.add(doc_id, p)  # pictures left waiting when the app was closed

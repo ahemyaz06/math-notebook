@@ -11,6 +11,7 @@ So the page can be rebuilt exactly, in a fraction of a second, and it cannot inv
 anything. Pages whose math is drawn as shapes (OpenStax) or scanned have nothing to read
 here; the caller sends those to the AI.
 """
+from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass, field, replace
 import math
@@ -935,28 +936,43 @@ def _extent(atoms):
 
 
 def row_markdown(items, body, found=None):
-    """A row as Markdown. found, if given, gets each formula and where it is (for the
-    check that typesets the reading again, reading_check.py)."""
+    """A row as Markdown. found gets each formula's PDF box and span in the row."""
     out, last_word = '', None
+    equations = []
     for kind, pieces in segments(items, body):
         piece = _text_run(pieces) if kind == 'T' else _math_run_tex(pieces)
         if not piece:
             continue
-        if kind == 'M' and found is not None:
-            found.append({'latex': piece, 'display': False, 'size': body,
-                          'box': _extent([a for _w, atoms in pieces for a in atoms])})
+        # Runs that meet inside one printed word ("$x$-intercept", "$a$,") stay joined.
+        if out and pieces[0][0] != last_word:
+            out += ' '
         if kind == 'M':
             # The bracket of the sentence around it is not maths: "(if ... that $a > 0$)".
             tail = ''
             # (Brackets count as one kind: the interval (-1, 1] is whole.)
             while piece[-1:] in (')', ']') and piece.count(')') + piece.count(']') > piece.count('(') + piece.count('['):
                 piece, tail = piece[:-1].rstrip(), piece[-1] + tail
+            if piece and found is not None:
+                start = len(out) + 1  # past the opening dollar sign
+                atoms = [a for _w, run in pieces for a in run]
+                if tail:
+                    atoms = atoms[:-len(tail)]
+                equations.append({'display': False, 'size': body, 'box': _extent(atoms),
+                                  'span': (start, start + len(piece))})
             piece = f'${piece}${tail}' if piece else tail
-        # Runs that meet inside one printed word ("$x$-intercept", "$a$,") stay joined.
-        same_word = last_word is not None and pieces[0][0] == last_word
-        out += piece if not out or same_word else ' ' + piece
+        out += piece
         last_word = pieces[-1][0]
-    return out.replace(' ,', ',').replace(' .', '.')
+    markdown = out.replace(' ,', ',').replace(' .', '.')
+    if equations:
+        removed_spaces = [m.start() for m in re.finditer(r' (?=[,.])', out)]
+        for equation in equations:
+            start, end = equation['span']
+            start -= bisect_left(removed_spaces, start)
+            end -= bisect_left(removed_spaces, end)
+            equation['span'] = (start, end)
+            equation['latex'] = markdown[start:end]
+        found.extend(equations)
+    return markdown
 
 
 def _split_side_by_side(items, body):
@@ -1073,7 +1089,7 @@ def read_page(page, figures=()):
             notes_raw.append((a.base, n))
         atoms.append(a)
     if not atoms and not figures:
-        return {'markdown': '', 'figure_lines': {}, 'notes': [], 'chars': 0}
+        return {'markdown': '', 'figure_lines': {}, 'notes': [], 'chars': 0, 'equations': []}
     body = _mode_size(atoms) if atoms else 10
     atoms = _join_pieces(_not_signs(atoms))
     rules, verticals = _rules(page, boxes)
@@ -1158,14 +1174,15 @@ def read_page(page, figures=()):
         if (all_math and (x0 > left + 15 or (centred and after_sentence))) or (segs and segs[0][0] == 'M' and x0 > left + 3 * body):
             tex = row_markdown_math(part, body)
             out, kind_now = f'$${tex}$$', 'display'
-            equations.append({'latex': tex, 'display': True, 'size': body, 'box': _extent(part)})
+            inline = [{'latex': tex, 'display': True, 'size': body, 'box': _extent(part),
+                       'span': (2, 2 + len(tex))}]
         elif size >= 1.3 * body and (not any(k == 'M' for k, _ in segs) or (
                 # a heading with maths in it ("Derivative of $y = \sin^{-1} x$"): its words are large
                 len(words := [a for a in part if a.cls == 'L']) >= 3 and all(a.size >= 1.3 * body for a in words))):
             out, kind_now = ('# ' if size >= 1.6 * body else '## ') + text.replace('**', ''), 'heading'
+            inline = []
         else:
             out, kind_now = text, 'text'
-            equations.extend(inline)
         # Lines with tall math (fractions) sit further apart, so a wider gap alone does not
         # end a paragraph unless the previous line ended a sentence.
         gap = y - prev['y'] if prev else 0
@@ -1175,18 +1192,28 @@ def read_page(page, figures=()):
         if new_paragraph:
             place_figures()
             blank()
+            line_number, offset = len(lines), 0
             lines.append(out)
             if kind_now != 'text':
                 blank()
         else:
+            line_number = len(lines) - 1
             if lines[-1].endswith('-') and re.search(r'[a-z]-$', lines[-1]) and re.match(r'[a-z]', out):
+                offset = len(lines[-1]) - 1
                 lines[-1] = lines[-1][:-1] + out
             elif INLINE_BREAK.search(lines[-1]) and out.startswith('$') and not out.startswith('$$'):
                 # TeX breaks a formula in a sentence only after an operator or relation: one
                 # ending in + or = goes on at the start of the next line, as one formula.
-                lines[-1] = lines[-1][:-1].rstrip() + ' ' + out[1:]
+                prefix = lines[-1][:-1].rstrip() + ' '
+                offset = len(prefix) - 1  # the incoming opening dollar sign is left out
+                lines[-1] = prefix + out[1:]
             else:
+                offset = len(lines[-1]) + 1
                 lines[-1] += ' ' + out
+        for equation in inline:
+            start, end = equation['span']
+            equation['span'] = (offset + start, offset + end)
+            equations.append((line_number, equation))
         if line_notes:
             notes.append((len(lines) - 1, '; '.join(sorted(set(line_notes)))))
         prev = {'kind': kind_now, 'y': y, 'left': x0 if new_paragraph else prev['left'],
@@ -1196,8 +1223,14 @@ def read_page(page, figures=()):
         notes.append((max(0, len(lines) - 1), n))
     while lines and lines[-1] == '':
         lines.pop()
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line) + 1)  # include the newline
+    for line_number, equation in equations:
+        start, end = equation['span']
+        equation['span'] = (starts[line_number] + start, starts[line_number] + end)
     return {'markdown': '\n'.join(lines), 'figure_lines': figure_lines, 'notes': notes, 'chars': len(page.chars),
-            'equations': equations}
+            'equations': [equation for _, equation in equations]}
 
 
 def row_markdown_math(items, body):

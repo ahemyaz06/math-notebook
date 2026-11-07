@@ -1,9 +1,8 @@
 # Math Notebook
 
-A document editor for maths that works like Word: your notes and answers in one
-editable document, PDFs converted into it with every equation as real maths, export to
-Word and PDF, and graphs you explore by sound with Sound Lab's engine. Everything runs on
-this computer. The AI is an add-on: without it everything except reading pictures works.
+A document editor for writing maths with NVDA. Write notes and answers, import PDF and
+LaTeX files, explore graphs by sound, and export your work to Word or PDF. The optional
+AI add-on reads scanned pages and describes pictures.
 The version is in Help > About; Help > Check for updates asks GitHub if a newer one is out.
 
 ## In this guide
@@ -12,12 +11,12 @@ Each part in a sentence; the details follow in the same order.
 
 - **Start**: how to open it, the menus, the toolbar and F1.
 - **The portable version** and **The installed version**: the two downloads, where each keeps
-  your settings, and how they are built.
+  your settings, and how to update them.
 - **Writing**: Word's keys for text, lists, tables, find, spelling (F7) and saving.
 - **Moving around without changing NVDA's mode**: headings, notes and find while in focus mode.
 - **Maths**: typing equations, moving through one symbol at a time, copying the one above
   (Shift+Enter), comments (`#`, `//`), intervals (`[0, 2pi]`, Ctrl+Shift+D), conversions.
-- **LaTeX files (.tex)**: importing a teacher's source file exactly, graphs included.
+- **LaTeX files (.tex)**: importing a teacher's source file, including supported graphs.
 - **Sharing documents**: Word and PDF out; a PDF from the notebook opens back exactly.
 - **Teacher mode**: hiding lines, words, answers and parts of graphs for a student copy.
 - **Graphs**: graphing an equation (on its interval, if it has one) and what is described.
@@ -30,36 +29,32 @@ Each part in a sentence; the details follow in the same order.
 
 ## Start
 
-Double-click `Start Math Notebook.cmd`. A window opens with the cursor in an empty
-document. Everything is in the menu bar (Alt: File, Edit, Insert, Format, Table, Math,
+Open Math Notebook from the Start menu if you installed it, or run `Math Notebook.exe`
+from the extracted portable folder. A window opens with the cursor in an empty
+document. Press Alt for the menu bar (File, Edit, Insert, Format, Table, Math,
 Graph, Review, Teacher, Settings, Help), as in Word, and the most used commands are also
 buttons on the toolbar above the document, each with its name written on it. The toolbar is
 one Tab stop: the arrow keys move along it, and F6 goes between the toolbar and the document.
 F1 opens the keyboard shortcuts page (made from the menus, so it is always right).
 
-Needs: Recognition Lab's Python environment and `npm install` in the main folder
-(for the window). The reading model is optional (see "The AI add-on").
 
 ## The portable version (no AI, nothing to install)
 
-`recognition-lab\.venv\Scripts\python.exe notebook\build_portable.py` makes
-`dist\Math Notebook\` and `dist\Math Notebook (portable).zip` (about 230 MB). Unzip it
-anywhere on a 64-bit Windows PC and double-click `Math Notebook.exe`: it carries its own
-Python and the window, and keeps its settings and read PDFs in a `data` folder beside
-the exe. It is this same notebook without the AI add-on; `Read me first.txt` inside
-explains it.
+Extract all of `Math-Notebook-portable.zip` into a writable folder on 64-bit Windows 10 or 11,
+then run `Math Notebook.exe`. Keep the files together. The app keeps settings and imported
+PDFs in a `data` folder beside the exe. To update, close Math Notebook, extract the new zip
+to a new folder and copy the old `data` folder into it. `Read me first.txt` has a quick start.
+
 ## The installed version (a Windows setup)
 
-`recognition-lab\.venv\Scripts\python.exe notebook\build_release.py` makes both release
-files at once: `dist\Math-Notebook-portable.zip` and `dist\Math-Notebook-Setup.exe` (with
-[Inno Setup 6](https://jrsoftware.org/isinfo.php); its script is `notebook\installer\MathNotebook.iss`),
-plus `dist\SHA256SUMS.txt`. The setup holds the same files as the portable version and
-an `INSTALLED` marker: the installed copy never writes beside its exe, and keeps its
-settings, read PDFs and window files in `%LOCALAPPDATA%\MathNotebook`, as the full app
-does. It installs for the current user by default (no administrator prompt), with all
-users as a choice. A newer setup upgrades in place and keeps the data; uninstalling asks
-whether to keep it (yes by default; `/REMOVEDATA` removes it in a silent uninstall). The
-version is set once, in `notebook\VERSION`, and shown in Help > About.
+Run `Math-Notebook-Setup.exe` on 64-bit Windows 10 or 11. It installs for the current
+user by default, with all users as a choice. The setup is unsigned, so Windows may warn
+when it starts. The app keeps settings, imported PDFs and window files in
+`%LOCALAPPDATA%\MathNotebook`. Run a newer setup to upgrade in place and keep your data.
+You can uninstall through Windows Installed apps and choose whether to keep the data.
+Help > About shows the version in either package. See [what changed in 0.7.6](CHANGELOG.md).
+
+
 ## Writing (the keys are Word's)
 
 - Type normally. Ctrl+B, Ctrl+I, Ctrl+U: bold, italic, underline (the status line says
@@ -142,7 +137,7 @@ current line with equations spelled out.
   text ("Equation: x = log(3^x)"). Settings > Writing can turn this off.
 - All conversions are rules, not AI (`web/equation.js`, `web/mathml.js`). The Word
   equations were checked in Word itself against Microsoft's own converter on 119
-  equations (`test-fixtures/math/latex-cases.txt`).
+  equations. The source checkout includes `test-fixtures/math/latex-cases.txt`.
 
 ## LaTeX files (.tex)
 
@@ -164,8 +159,8 @@ axis is said as an empty grid to draw on. Other pictures and TikZ drawings are n
 shown. One mistake in the file (a `{` never closed, an environment never ended) loses only that
 part, never the whole file. Whatever could not be read is a review note at the end (F8).
 
-Asking a professor for the .tex files is a small request: they already have them, and
-the result is exact. `test-fixtures/math/homework.tex` is a sample.
+If you have the teacher’s LaTeX source, import it directly. The source checkout includes
+`test-fixtures/math/homework.tex` as a sample.
 
 ## Sharing documents: PDF and Word, nothing special
 
@@ -221,21 +216,18 @@ practice: Teacher > Teacher mode. Then:
 ## Converting a PDF
 
 File > Import PDF (Ctrl+Shift+I; Ctrl+I is italic, as in Word). Pages are added at the end of the document as they finish; you
-can keep working.
+can keep working. If you switch notebooks during an import, the remaining pages stay out
+of the new notebook. Import the PDF again to use pages that have already been read.
 
 How a page is read is chosen in Settings > Reading PDFs:
 
-- **Automatic** (the default): course PDFs made with LaTeX keep every character with its
-  font, size and position, so the page is rebuilt from them by rules, without AI
-  (`pdf_text_reader.py`): exponents are the smaller raised characters, fractions are what
-  sits above and below a thin rule, square roots are a radical sign with a rule from its
-  top, piecewise definitions are a tall brace, and so on. It cannot invent anything and
-  takes about 0.07 seconds a page (101 course pages: 7.5 seconds). The 9-page
-  Continuity notes are read in about 3 seconds instead of 41. Pictures keep their place
+- **Automatic** (the default): the notebook reads supported PDFs using the letters and
+  symbols on the page. It uses their positions to tell fractions from exponents, for
+  example. It can still get an equation wrong. Pictures keep their place
   in the document ("Picture 1 on page 1: its description is on the way") and wait in a
   queue for the AI, two at a time; each description replaces its placeholder when it
-  arrives, and you can import another PDF meanwhile. Graphs drawn by LaTeX are still read
-  exactly from the PDF, with no AI. Pages whose maths is not stored as text (scans, or
+  arrives, and you can import another PDF meanwhile. Supported LaTeX graphs can be read
+  from the PDF drawing without AI. Pages whose maths is not stored as text (scans, or
   textbooks such as OpenStax that draw formulas as shapes) go to the AI as before.
 - **Text from the PDF only**: never asks the AI to read a page; such pages say why they
   were not read.
@@ -243,14 +235,11 @@ How a page is read is chosen in Settings > Reading PDFs:
   model starts loading as soon as the file dialog opens and two pages are read at a time:
   a 15-page lecture took about 80 seconds.
 
-**Checking each equation against the page (optional, needs Tectonic).** With
-[Tectonic](https://tectonic-typesetting.github.io/) installed, every equation read from a page
-is typeset again and compared with that place on the page: the same characters in the same
-order, raised or lowered alike, the same characters under each fraction bar and root. When an
-equation does not match, readings close to it are tried (an exponent read as a subscript, a
-root or fraction one character too long or short, a mark set over an equals sign), and one is
-kept only if it matches the page exactly; otherwise the reading stays as it was. The switch is
-Settings > Reading PDFs, "Check each equation" (on; it does nothing without Tectonic).
+**Checking PDF equations (optional, needs Tectonic).** For supported pages read without
+AI, the notebook draws the equations again and compares them with the PDF. It can correct
+some mistakes, such as a subscript read as an exponent. Other mistakes may stay in the
+document, so check important equations against the PDF. The switch is Settings > Reading
+PDFs > Check each equation. It is on by default and needs Tectonic to do the check.
 Tectonic is not included with Math Notebook. To use the check, install it yourself
 ([installing Tectonic](https://tectonic-typesetting.github.io/book/latest/installation/), or
 the Windows zip from its [releases](https://github.com/tectonic-typesetting/tectonic/releases))
@@ -280,7 +269,7 @@ each problem a level-2 heading, and an empty answer line under each problem.
   note (underlined). F8 and Shift+F8 go to the next and previous note and read it; Review >
   Remove review note clears it once you have fixed the line. Example from real homework:
   the model wrote "f and q" where the PDF has "f and g".
-- Graphs drawn by LaTeX are read exactly from the PDF (corners, peaks, zeros, dots, dashed
+- Supported LaTeX graphs are read from the PDF drawing (corners, peaks, zeros, dots, dashed
   lines, blank answer grids). Pasted pictures get an AI description marked "may be wrong".
 
 ## Settings

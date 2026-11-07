@@ -44,13 +44,25 @@ def typeset(tex):
     pdf = CACHE / f'{key}.pdf'
     if pdf.exists():
         return pdf, None
-    src = CACHE / f'{key}.tex'
-    src.write_text(tex, encoding='utf8')
-    run = subprocess.run([find_tectonic(), '--chatter', 'minimal', '--outdir', str(CACHE), str(src)],
-                         capture_output=True, text=True, encoding='utf8', errors='replace',
-                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    if run.returncode or not pdf.exists():
-        return None, (run.stderr or run.stdout).strip()[-600:]
+    tectonic = find_tectonic()
+    if not tectonic:
+        return None, 'Tectonic is not installed'
+    # Two pages can ask for the same output. Publish only a completed PDF to the shared cache.
+    with tempfile.TemporaryDirectory(dir=CACHE) as tmp:
+        folder = Path(tmp)
+        src = folder / f'{key}.tex'
+        src.write_text(tex, encoding='utf8')
+        run = subprocess.run([tectonic, '--chatter', 'minimal', '--outdir', str(folder), str(src)],
+                             capture_output=True, text=True, encoding='utf8', errors='replace',
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        output = src.with_suffix('.pdf')
+        if run.returncode or not output.exists():
+            return None, (run.stderr or run.stdout).strip()[-600:]
+        try:
+            os.replace(output, pdf)
+        except OSError:
+            if not pdf.exists():
+                raise
     return pdf, None
 
 
@@ -454,18 +466,15 @@ def alternatives(tex, limit=60):
 
 
 def fix_markdown(markdown, equations, results):
-    """The page's Markdown with each fixed reading put in place of the one it replaces."""
+    """Apply corrections to the exact pieces of Markdown emitted for their PDF boxes."""
+    parts = []
+    previous_end = 0
     for e, (verdict, latex) in zip(equations, results):
         if verdict != 'fixed':
             continue
-        # The formula itself, as a display or in a sentence; a part of one only where a
-        # sentence's formula was joined from two lines (its halves were checked one by one).
-        for old, new in ((f'$${e["latex"]}$$', f'$${latex}$$'), (f'${e["latex"]}$', f'${latex}$')):
-            m = re.search(r'(?<!\$)' + re.escape(old) + r'(?!\$)' if old.count('$') == 2 else re.escape(old), markdown)
-            if m:
-                markdown = markdown[:m.start()] + new + markdown[m.end():]
-                break
-        else:
-            if e['latex'] in markdown:
-                markdown = markdown.replace(e['latex'], latex, 1)
-    return markdown
+        start, end = e['span']
+        if previous_end <= start < end <= len(markdown) and markdown[start:end] == e['latex']:
+            parts.extend((markdown[previous_end:start], latex))
+            previous_end = end
+    parts.append(markdown[previous_end:])
+    return ''.join(parts)

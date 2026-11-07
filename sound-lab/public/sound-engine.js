@@ -380,9 +380,16 @@ export class CalculusSoundEngine {
     if (Math.abs(y) <= 1e-6) {
       return { region: 'zero', frequency: 330.0, gear: 0, stepInGear: 0 };
     }
-    const quantizedAbs = Math.max(0.25, Math.round(Math.abs(y) * 4) / 4);
-    const gear = Math.floor((quantizedAbs - 0.001) / 10);
-    const stepInGear = Number((quantizedAbs - gear * 10).toPrecision(4));
+    // Above this size doubles already represent whole numbers, so multiplying
+    // by four would only risk overflow. Use the remainder for pitch even when
+    // subtracting a rounded gear times ten would lose the last digits.
+    const height = Math.abs(y);
+    const quantizedAbs = height < Number.MAX_SAFE_INTEGER
+      ? Math.max(0.25, Math.round(height * 4) / 4)
+      : height;
+    const remainder = quantizedAbs % 10;
+    const stepInGear = remainder === 0 ? 10 : remainder;
+    const gear = Math.floor(quantizedAbs / 10) - (remainder === 0 ? 1 : 0);
 
     if (y > 0) {
       // Clearer pitch spreads the notes a little (2 semitones a unit); off, the original 1.5.
