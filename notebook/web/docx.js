@@ -8,7 +8,7 @@ import { latexToOmml } from './mathml.js';
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   // Characters XML 1.0 cannot hold at all (control characters) are left out.
-  .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '');
+  .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ud800-\udfff\ufffe\uffff]/gu, '');
 
 const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
   + 'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '

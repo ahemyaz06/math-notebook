@@ -3,10 +3,14 @@
 // tone plays when the cursor lands on it; Space plays with the bass and reads the
 // coordinate when it stops; Tab switches functions.
 import { CalculusSoundEngine } from '/sound/sound-engine.js';
-import { compileEquation, detectLandmarks, findStepEvents, formatNumber } from '/sound/graph-math.js';
+import { compileEquation, detectLandmarks, estimateSide, findStepEvents, formatNumber } from '/sound/graph-math.js';
 import { HIDEABLE, compileFunction, describeFunction, exactly, landmarksOf, say, setNumberStyle, spokenLabel } from './graphs.js';
 
 const STEPS = [0.1, 0.25, 0.5, 1];
+// After a step the position is read this soon. It was 650 ms, which felt like NVDA lagging
+// behind every arrow press (owner's report, homework 4.1). A held key repeats faster than
+// this, so it still reads once, where you stop; the next key press cuts NVDA off anyway.
+const MOVE_SPEECH_MS = 120;
 // say() rounds as Settings asks (nearest half by default); exact() is for what you chose
 // yourself: where the cursor is along x (already on your step) and the step size.
 const exact = (n) => formatNumber(Math.abs(n) < 1e-9 ? 0 : n).replace('-', 'minus ');
@@ -76,8 +80,11 @@ function sampledFunction(curve, dots = []) {
     landmarks() {
       const out = [];
       for (const t of curve.turning_points || []) out.push({ kind: t.kind === 'peak' ? 'maximum' : 'minimum', x: t.at[0], y: t.at[1], label: `${t.kind} at ${say(t.at[0])}, ${say(t.at[1])}` });
-      for (const z of curve.crosses_x_axis_at || []) out.push({ kind: Math.abs(z) < 1e-6 ? 'origin' : 'x-axis', x: z, y: 0, label: `crosses the x-axis at ${say(z)}` });
-      if (Number.isFinite(curve.crosses_y_axis_at) && !(curve.crosses_x_axis_at || []).some((z) => Math.abs(z) < 1e-6)) {
+      const roots = [...(curve.crosses_x_axis_at || []).map((x) => ({ x, touches: false })),
+        ...(curve.touches_x_axis_at || []).map((x) => ({ x, touches: true }))];
+      for (const { x, touches } of roots) out.push({ kind: x === 0 ? 'origin' : 'x-axis', x, y: 0, touches,
+        label: (touches ? 'touches' : 'crosses') + ' the x-axis at ' + say(x) });
+      if (Number.isFinite(curve.crosses_y_axis_at) && !roots.some(({ x }) => x === 0)) {
         out.push({ kind: 'y-axis', x: 0, y: curve.crosses_y_axis_at, label: `crosses the y-axis at ${say(curve.crosses_y_axis_at)}` });
       }
       for (const a of curve.asymptotes || []) out.push({ kind: 'asymptote', x: a, y: null, label: `vertical asymptote at x = ${say(a)}` });
@@ -124,7 +131,7 @@ export class GraphMode {
   // Settings > Graph sound.
   applySettings(s) {
     this.settings = { sound_profile: 'gentle', bass_mode: 'x-and-y', step: 0.5, play_speed_ms: 400, cues: true,
-      volume: 0.25, bass_volume: 0.35, free_move_tones: true, dot_sounds: 'new', graph_numbers: 'half', pitch_glide: true, slope_sound: false, ...this.settings, ...s };
+      volume: 0.25, bass_volume: 0.35, free_move_tones: true, dot_sounds: 'new', graph_numbers: 'half', pitch_glide: true, slope_sound: false, stereo_width: 'original', ...this.settings, ...s };
     const v = this.settings;
     this.sound.setSoundProfile(v.sound_profile);
     this.sound.setBassOutlineMode(v.bass_mode);
@@ -134,6 +141,7 @@ export class GraphMode {
     this.sound.setStepDelayMs(v.play_speed_ms);
     this.sound.setDotSounds(v.dot_sounds);
     this.sound.setPitchGlide(v.pitch_glide);
+    this.sound.setStereoWidth(v.stereo_width);
     if ('slope_sound' in s) this.slopeSound = Boolean(v.slope_sound); // D in graph mode turns it on or off for now
     setNumberStyle(v.graph_numbers);
   }
@@ -150,9 +158,10 @@ export class GraphMode {
     engine.setBassOutlineMode(v.bass_mode === 'off' ? 'x-and-y' : v.bass_mode);
     engine.setCuesEnabled(true);
     engine.setPitchGlide(v.pitch_glide);
+    engine.setStereoWidth(v.stereo_width);
     engine.setDotSounds(v.dot_sounds);
     engine.setStepDelayMs(300);
-    engine.setWindow({ y: [-3, 4] });
+    engine.setWindow({ x: [-4, 4], y: [-3, 4] });
     for (const t of this.previewTimers || []) clearTimeout(t);
     engine.stopBassOutline();
     this.previewTimers = [];
@@ -205,6 +214,19 @@ export class GraphMode {
     }
   }
 
+  // Settings > Graph sound > Stereo: one note walking from the left edge to the right edge of a
+  // graph from minus 10 to 10, with the bass line under it.
+  previewStereo(values) {
+    const e = this.previewEngineFor(values);
+    e.setWindow({ x: [-10, 10], y: [-3, 4] });
+    const xs = [-10, -7.5, -5, -2.5, 0, 2.5, 5, 7.5, 10];
+    xs.forEach((x, i) => this.previewTimers.push(setTimeout(() => {
+      e.playStepSequence({ x, lim: { defined: true, y: 1 }, boundary: 10, prevY: i ? 1 : null, withBassOutline: true });
+    }, i * 350)));
+    this.previewTimers.push(setTimeout(() => e.stopBassOutline(), xs.length * 350 + 200));
+    return 'Left edge to right edge of a graph from minus 10 to 10.';
+  }
+
   preview(values, short = false) {
     const engine = this.previewEngineFor(values);
     const ys = short ? [0, 1, 2, 1, 0] : [0, 0.5, 1, 1.5, 2, 2.5, 3, 2.5, 2, 1.5, 1, 0.5, 0, -0.5, -1, -1.5, -2, -1.5, -1, -0.5, 0];
@@ -224,6 +246,7 @@ export class GraphMode {
   // graph: { title, summary, span: {x:[a,b], y:[c,d]}, curves: [...], points: [...], equations: [...] }
   open(graph) {
     this.graph = graph;
+    this.drawn = null; // the same graph may have been edited since
     const span = graph.span || { x: [-5, 5], y: [-5, 5] };
     this.span = span;
     this.sound.setWindow(span);
@@ -347,7 +370,7 @@ export class GraphMode {
     }
     this.draw();
     const landed = events.landedOn.map((l) => l.label).join('; ');
-    if (!withBass) this.speak(`${this.where()}${landed ? `. ${landed}` : ''}`, 650); // read once you stop moving
+    if (!withBass) this.speak(`${this.where()}${landed ? `. ${landed}` : ''}`, MOVE_SPEECH_MS);
   }
 
   moveFree(dx, dy) {
@@ -368,7 +391,7 @@ export class GraphMode {
     else if (dot) this.sound.playLandmarkEffect(dot.kind, dot.x, this.boundary, dot.y, dot);
     else if (on.length) this.sound.playSeatedPulse(this.free.x, on[0].limitAt(this.free.x).y, this.boundary, null);
     this.draw();
-    this.speak(this.where() + (dot ? `, ${dot.label}` : ''), 650);
+    this.speak(this.where() + (dot ? `, ${dot.label}` : ''), MOVE_SPEECH_MS);
   }
 
   play() {
@@ -402,31 +425,28 @@ export class GraphMode {
     this.speak([...new Set(here.map((l) => l.label))].join('; '));
   }
 
-  // The curve's height just left (dir -1) or right (dir 1) of x, closer and closer:
-  // { value } where it settles, { infinite: 1 or -1 } where it runs off, or null (no curve there,
-  // or it never settles).
   sideLimit(x, dir) {
-    const f = this.fn;
-    const v = [1e-3, 1e-4, 1e-5, 1e-6].map((h) => { const l = f.limitAt(x + dir * h); return l.defined ? l.y : NaN; });
-    if (!v.slice(1).every(Number.isFinite)) return null;
-    if (Math.abs(v[3]) > 1e4 && Math.abs(v[3]) > 10 * Math.abs(v[0])) return { infinite: Math.sign(v[3]) };
-    if (Math.abs(v[1] - v[3]) > 0.01 * (1 + Math.abs(v[3]))) return null;
-    return { value: Number(v[3].toPrecision(6)) };
+    return estimateSide((t) => {
+      const point = this.fn.limitAt(t);
+      return point.defined ? point.y : NaN;
+    }, x, dir);
   }
 
   // L: the limits at the cursor from the left and the right, and the value there.
   limits() {
     if (!this.fn) return 'No function to read.';
     const x = this.tracing ? this.x : this.free.x;
-    const words = (l) => (!l ? 'no limit' : l.infinite ? (l.infinite > 0 ? 'goes up to infinity' : 'goes down to minus infinity') : say(l.value));
+    const words = (l) => (!l ? 'no limit' : l.uncertain ? 'could not estimate' : l.infinite ? (l.infinite > 0 ? 'goes up to infinity' : 'goes down to minus infinity') : say(l.value));
     const left = this.sideLimit(x, -1), right = this.sideLimit(x, 1);
     const here = this.fn.limitAt(x);
     const value = here.defined ? `the value is ${say(here.y)}` : 'there is no point here';
     const same = left && right && !left.infinite && !right.infinite && Math.abs(left.value - right.value) <= 1e-4 * (1 + Math.abs(left.value));
     let verdict;
-    if (same) verdict = here.defined && Math.abs(here.y - left.value) <= 1e-4 * (1 + Math.abs(here.y)) ? 'Continuous here.' : here.defined ? 'The limit and the value differ.' : 'A hole: the limit exists, but there is no point.';
+    if (left?.uncertain || right?.uncertain) verdict = 'Could not estimate the limit reliably.';
+    else if (same) verdict = here.defined && Math.abs(here.y - left.value) <= 1e-4 * (1 + Math.abs(here.y)) ? 'Continuous here.' : here.defined ? 'The limit and the value differ.' : 'A hole: the limit exists, but there is no point.';
     else if (left && right && left.infinite && left.infinite === right.infinite) verdict = 'A vertical asymptote.';
     else if (left && right) verdict = left.infinite || right.infinite ? 'A vertical asymptote: the two sides differ.' : 'No limit: the two sides differ, a jump.';
+    else if (left?.infinite || right?.infinite) verdict = 'A vertical asymptote.';
     else verdict = !left && !right ? 'No curve on either side.' : `The curve is only on the ${left ? 'left' : 'right'}.`;
     const sides = same ? `from both sides ${say(left.value)}` : `from the left ${words(left)}, from the right ${words(right)}`;
     return `At x = ${exact(x)}: ${sides}; ${value}. ${verdict}`;
@@ -436,23 +456,19 @@ export class GraphMode {
   // otherwise { left, right } (a corner, a jump or an end), each null where there is none.
   slopeAt(x) {
     const f = this.fn;
-    const h = 1e-4;
     const y = (t) => { const l = f.limitAt(t); return l.defined ? l.y : NaN; };
     const y0 = y(x);
     if (!Number.isFinite(y0)) return { slope: null, left: null, right: null };
-    // One side's slope; where it keeps growing as the step shrinks (the start of sqrt x, the
-    // middle of cbrt x) the curve is vertical there: an infinite slope.
-    const side = (dir) => {
-      const a = y(x + dir * h), b = y(x + dir * h / 100);
-      if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-      // A gap that does not close as the step shrinks is a jump: no slope across it.
-      if (Math.abs(b - y0) > 1e-3 && Math.abs(b - y0) > 0.5 * Math.abs(a - y0)) return NaN;
-      const far = (a - y0) / (dir * h), near = (b - y0) / (dir * h / 100);
-      return Math.abs(near) > 50 && Math.abs(near) > 4 * Math.abs(far) ? Math.sign(near) * Infinity : near;
-    };
-    const left = side(-1), right = side(1);
-    if (Number.isNaN(left) || Number.isNaN(right)) return { slope: null, left, right, jump: true };
-    const same = left !== null && right !== null && (left === right || Math.abs(left - right) <= 0.02 * (1 + Math.abs(left) + Math.abs(right)));
+    const limits = [-1, 1].map((dir) => this.sideLimit(x, dir));
+    const jump = limits.some((limit) => Number.isFinite(limit?.value) &&
+      Math.abs(limit.value - y0) > 1e-6 * (1 + Math.abs(y0)));
+    if (jump) return { slope: null, left: null, right: null, jump };
+    const side = (dir) => estimateSide((t) => (y(t) - y0) / (t - x), x, dir, Math.abs(y0) * Number.EPSILON * 2);
+    const estimates = [side(-1), side(1)];
+    if (estimates.some((limit) => limit?.uncertain)) return { slope: null, left: null, right: null, uncertain: true };
+    const [left, right] = estimates.map((limit) => limit?.infinite ? limit.infinite * Infinity : limit?.value ?? null);
+    const same = left !== null && right !== null && (left === right ||
+      (Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= 0.02 * (1 + Math.abs(left) + Math.abs(right))));
     if (same) return { slope: Number.isFinite(left) ? (left + right) / 2 : left, left, right };
     return { slope: null, left, right };
   }
@@ -462,7 +478,8 @@ export class GraphMode {
     if (!this.fn) return 'No function to read.';
     const x = this.tracing ? this.x : this.free.x;
     const about = this.fn.compiled || this.fn.graph ? '' : 'about ';
-    const { slope, left, right, jump } = this.slopeAt(x);
+    const { slope, left, right, jump, uncertain } = this.slopeAt(x);
+    if (uncertain) return `At x = ${exact(x)}: could not estimate the slope reliably.`;
     if (jump) return `At x = ${exact(x)}: no single slope, the curve jumps here.`;
     if (slope !== null) return `At x = ${exact(x)}: ${slopeWords(slope, about)}.`;
     if (left === null && right === null) return `At x = ${exact(x)}: no slope, there is no point here.`;
@@ -556,13 +573,29 @@ export class GraphMode {
     }
   }
 
-  // A picture for sighted helpers; hidden from screen readers.
+  // A picture for sighted helpers; hidden from screen readers. The curves are drawn again
+  // only when the graph or the selected function changes; a step just moves the cursor ring
+  // (redrawing every curve on each arrow press made moving lag).
   draw() {
     const svg = this.root.querySelector('svg');
     if (!svg) return;
     const [x0, x1] = this.span.x, [y0, y1] = this.span.y;
     const W = 600, H = 400;
     const px = (x) => ((x - x0) / (x1 - x0)) * W, py = (y) => H - ((y - y0) / (y1 - y0)) * H;
+    const cx = this.tracing ? this.x : this.free.x;
+    const cy = this.tracing ? this.fn?.limitAt(this.x).y : this.free.y;
+    if (this.drawn !== this.graph || this.drawnIndex !== this.index || !svg.querySelector('.graph-cursor')) {
+      this.drawPicture(svg, W, H, px, py);
+      this.drawn = this.graph;
+      this.drawnIndex = this.index;
+    }
+    const ring = svg.querySelector('.graph-cursor');
+    ring.setAttribute('visibility', Number.isFinite(cy) ? 'visible' : 'hidden');
+    if (Number.isFinite(cy)) { ring.setAttribute('cx', px(cx)); ring.setAttribute('cy', py(cy)); }
+  }
+
+  drawPicture(svg, W, H, px, py) {
+    const [x0, x1] = this.span.x, [y0, y1] = this.span.y;
     const paths = this.functions.map((f, n) => {
       let d = '', pen = false, prev = null;
       const room = (y1 - y0) * 0.5;
@@ -577,8 +610,6 @@ export class GraphMode {
       }
       return `<path d="${d}" fill="none" stroke="${n === this.index ? 'var(--accent)' : 'var(--muted)'}" stroke-width="${n === this.index ? 3 : 1.5}"/>`;
     }).join('');
-    const cx = this.tracing ? this.x : this.free.x;
-    const cy = this.tracing ? this.fn?.limitAt(this.x).y : this.free.y;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     // Axis numbers at whole steps (about ten of them), so a sighted helper can read the picture.
     const ticks = (lo, hi) => { const step = 10 ** Math.floor(Math.log10((hi - lo) / 2)) * ([1, 2, 5].find((m) => (hi - lo) / (10 ** Math.floor(Math.log10((hi - lo) / 2)) * m) <= 12) || 10); const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(Number(v.toPrecision(10))); return out; };
@@ -591,6 +622,6 @@ export class GraphMode {
     const own = (this.shapes || []).filter((l) => (l.kind === 'open-point' && !this.dots.some((d) => Math.abs(d.x - l.x) < 1e-9)) || (l.kind === 'endpoint' && !l.included));
     const dots = [...(this.dots || []), ...own.map((l) => ({ kind: 'open-point', x: l.x, y: l.y }))].map((d) => `<circle cx="${px(d.x)}" cy="${py(d.y)}" r="4.5" fill="${d.kind === 'open-point' ? 'var(--bg)' : 'var(--text)'}" stroke="var(--text)" stroke-width="1.5"/>`).join('');
     svg.innerHTML = `<line x1="${px(0)}" y1="0" x2="${px(0)}" y2="${H}" stroke="var(--line)"/><line x1="0" y1="${py(0)}" x2="${W}" y2="${py(0)}" stroke="var(--line)"/>${labels}${paths}${dots}`
-      + (Number.isFinite(cy) ? `<circle cx="${px(cx)}" cy="${py(cy)}" r="7" fill="none" stroke="var(--check-line)" stroke-width="3"/>` : '');
+      + '<circle class="graph-cursor" r="7" fill="none" stroke="var(--check-line)" stroke-width="3"/>';
   }
 }

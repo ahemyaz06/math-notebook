@@ -8,6 +8,21 @@
 
 import { playVoice, VOICES } from './voices.js';
 
+// Wider stereo (Settings > Graph sound > Stereo). How far a window's edge reaches grows with the
+// window: an edge at 1 (or nearer) is half way to that side, at 3 about 70%, at 10 or further 90%,
+// never all the way, so the far ear always hears a little. Inside, a curve: steps near the middle
+// move further than the same steps near the edge (x at 3 of 10 is 44% to the side, not 30%).
+// Each side is measured to its own edge, so a window from -3 to 10 still reaches far left.
+// xRange: the graph's [left, right], or null to use -boundary .. boundary.
+export function widerPan(x, xRange, boundary) {
+  const left = x < 0;
+  let edge = xRange ? (left ? -xRange[0] : xRange[1]) : boundary;
+  if (!(edge > 0)) edge = boundary; // the window has no room on this side
+  const reach = 0.5 + 0.4 * Math.min(1, Math.max(0, Math.log10(edge)));
+  const pan = reach * Math.pow(Math.min(1, Math.abs(x) / edge), 0.6);
+  return left ? -pan : pan;
+}
+
 export const CLASSIC_PROFILES = ['gentle', 'warm-acoustic', 'soft-synth', 'crisp-piano', 'high-contrast', 'progress'];
 
 export class CalculusSoundEngine {
@@ -48,6 +63,15 @@ export class CalculusSoundEngine {
     // apart. Off is exactly the original sound.
     this.pitchGlide = true;
     this.lastProgressFreq = null;
+
+    // Stereo width: 'original' (a window's edges are almost fully left and right, x placed in a
+    // straight line between) or 'wider' (see computePan). The graph's x window, for 'wider'.
+    this.stereoWidth = 'original';
+    this.xRange = null;
+  }
+
+  setStereoWidth(mode) {
+    if (['original', 'wider'].includes(mode)) this.stereoWidth = mode;
   }
 
   setPitchGlide(on) {
@@ -84,10 +108,11 @@ export class CalculusSoundEngine {
     if (['new', 'original'].includes(mode)) this.dotSounds = mode;
   }
 
-  // { y: [bottom, top] } of the graph being explored, or null.
+  // { x: [left, right], y: [bottom, top] } of the graph being explored, or null.
   setWindow(span) {
-    const r = span && span.y;
-    this.yRange = Array.isArray(r) && r.every(Number.isFinite) && r[1] > r[0] ? [r[0], r[1]] : null;
+    const ok = (r) => Array.isArray(r) && r.length === 2 && r.every(Number.isFinite) && r[1] > r[0];
+    this.yRange = ok(span && span.y) ? [span.y[0], span.y[1]] : null;
+    this.xRange = ok(span && span.x) ? [span.x[0], span.x[1]] : null;
   }
 
   // 'progress' profile: one short, rounded beep per step whose pitch climbs steadily from the
@@ -225,7 +250,17 @@ export class CalculusSoundEngine {
   computePan(x, boundary = 5) {
     if (!Number.isFinite(x) || Math.abs(x) <= 1e-7) return 0;
     const safeBoundary = Math.max(1, Number(boundary) || 5);
+    if (this.stereoWidth === 'wider') return widerPan(x, this.xRange, safeBoundary);
     return Math.max(-0.92, Math.min(0.92, x / safeBoundary));
+  }
+
+  // Wider stereo: the bass line also reaches the ear on the far side a little later (up to half a
+  // millisecond), the way a sound to one side does. Low notes are placed by that delay much more
+  // than by loudness. Original: no delay.
+  bassDelays(pan) {
+    if (this.stereoWidth !== 'wider') return [0, 0];
+    const d = Math.abs(pan) * 0.0005;
+    return pan < 0 ? [0, d] : [d, 0]; // [left ear, right ear]
   }
 
   // Computes the Continuous Dark Bass Outline frequency (65 Hz .. 185 Hz)
@@ -291,7 +326,17 @@ export class CalculusSoundEngine {
     subGain.connect(this.droneFilter);
     this.droneFilter.connect(this.droneGain);
     this.droneGain.connect(this.dronePanner);
-    this.dronePanner.connect(this.masterCompressor);
+    // Left and right ears each through a short delay (bassDelays), then together again.
+    const split = ctx.createChannelSplitter(2);
+    const merge = ctx.createChannelMerger(2);
+    this.droneDelays = [ctx.createDelay(0.01), ctx.createDelay(0.01)];
+    this.dronePanner.connect(split);
+    this.droneDelays.forEach((delay, ear) => {
+      delay.delayTime.setValueAtTime(0, now);
+      split.connect(delay, ear);
+      delay.connect(merge, 0, ear);
+    });
+    merge.connect(this.masterCompressor);
 
     this.droneOscMain.start(now);
     this.droneOscSub.start(now);
@@ -323,6 +368,7 @@ export class CalculusSoundEngine {
     const glideTime = Math.max(0.03, Math.min(0.14, this.stepDurationSeconds * 0.28));
 
     this.dronePanner.pan.setTargetAtTime(pan, now, glideTime);
+    this.bassDelays(pan).forEach((d, ear) => this.droneDelays[ear].delayTime.setTargetAtTime(d, now, glideTime));
 
     // Edge case: Open Hole (point is missing) -> dip the dark bass outline so you feel the hole in the thread
     if (!lim.defined && lim.hole) {
@@ -368,6 +414,7 @@ export class CalculusSoundEngine {
     this.droneFilter = null;
     this.droneGain = null;
     this.dronePanner = null;
+    this.droneDelays = null;
   }
 
   stopAll() {

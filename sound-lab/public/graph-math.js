@@ -5,14 +5,23 @@ const FUNCTIONS = {
   asin: Math.asin,
   acos: Math.acos,
   atan: Math.atan,
+  arcsec: (x) => Math.acos(1 / x),
+  arccsc: (x) => Math.asin(1 / x),
+  arccot: (x) => Math.atan2(1, x),
+  sinh: Math.sinh,
+  cosh: Math.cosh,
+  tanh: Math.tanh,
+  asinh: Math.asinh,
+  acosh: Math.acosh,
+  atanh: Math.atanh,
+  sech: (x) => 1 / Math.cosh(x),
+  csch: (x) => 1 / Math.sinh(x),
+  coth: (x) => 1 / Math.tanh(x),
   sqrt: Math.sqrt,
   abs: Math.abs,
   log: Math.log10,
   ln: Math.log,
-  exp: (x) => {
-    const result = Math.exp(x);
-    return result === 0 ? NaN : result;
-  },
+  exp: Math.exp,
   floor: Math.floor,
   ceil: Math.ceil,
   round: Math.round,
@@ -32,7 +41,7 @@ function binaryValue(operator, left, right) {
   if (operator === '^') {
     if (left === 0 && right === 0) return NaN;
     const result = left < 0 && !Number.isInteger(right) ? oddRootPower(left, right) : left ** right;
-    return result === 0 && left !== 0 ? NaN : finite(result);
+    return finite(result);
   }
   return NaN;
 }
@@ -139,6 +148,7 @@ export function compileExpression(source) {
       take('(');
       const argument = expression();
       take(')');
+      if (name === 'ln' || name === 'log') domainChecks.push({ kind: 'positive', evaluate: argument });
       if (name === 'tan') {
         domainChecks.push({ kind: 'zero', evaluate: (scope) => unaryValue(Math.cos, argument(scope)) });
       }
@@ -231,6 +241,7 @@ export function compileExpression(source) {
       return domainChecks.every((check) => {
         const values = [first, middle, second].map((scope) => check.evaluate(scope));
         if (!values.every(Number.isFinite)) return false;
+        if (check.kind === 'positive') return values.every((v) => v > 0);
         return check.kind === 'step'
           ? values.every((v) => v === values[0])
           : values.every((v) => v !== 0 && Math.sign(v) === Math.sign(values[0]));
@@ -243,23 +254,59 @@ export function compileExpression(source) {
   };
 }
 
-function holeLimit(fn, x) {
-  const minDistance = 32 * Number.EPSILON * Math.abs(x);
-  for (const d of new Set([Math.max(1e-6, minDistance), Math.max(1e-10, minDistance)])) {
-    const values = [fn(x - d), fn(x + d), fn(x - 100 * d), fn(x + 100 * d)];
-    if (!values.every(Number.isFinite)) return null;
-    const [left, right, farLeft, farRight] = values;
-    const near = Math.max(Math.abs(left), Math.abs(right));
-    const far = Math.max(Math.abs(farLeft), Math.abs(farRight));
-    // A limit can settle at a nonzero height, or shrink towards zero on both
-    // sides. Compare at the function's scale: even a small multiple of a pole
-    // grows as you approach it. Check closer in if a small limit has not settled.
-    const scale = Math.max(near, far);
-    if (near <= far / 4 || values.every((v) => Math.abs(v - left) <= scale / 1000)) {
-      return Number((left / 2 + right / 2).toPrecision(10));
-    }
+// Estimate a one-sided limit from successive changes as the distance shrinks by ten.
+// Extrapolating the remaining change also works for slowly closing roots and steep lines.
+export function estimateSide(fn, x, dir, roundoff = 0) {
+  const step = Math.max(1e-3, Math.abs(x) * Number.EPSILON * 1e6);
+  const probes = Array.from({ length: 6 }, (_, i) => x + dir * step / 10 ** i);
+  const values = probes.map(fn);
+  if (values.every((v) => !Number.isFinite(v))) return null;
+  const [a, b, c, d] = values.slice(-4);
+  if (![a, b, c, d].every(Number.isFinite)) return { uncertain: true };
+  if (c === d && b === c) return { value: d };
+  // Secant slopes divide rounding error in the height by the probe distance.
+  // If the estimates agree within that error, use a less cancellation-prone
+  // sample instead of extrapolating from the closest, noisiest pair.
+  const errorAt = (i) => roundoff * 10 ** i / step;
+  if (roundoff && Math.abs(b - a) <= errorAt(3) &&
+      Math.abs(c - b) <= errorAt(4) && Math.abs(d - c) <= errorAt(5)) {
+    return { value: b };
   }
-  return null;
+  const prev = c - b, last = d - c;
+  const earlierRatio = prev / (b - a), ratio = last / prev;
+  const [u, v, w] = probes.slice(-3);
+  const prevSlope = prev / (v - u), lastSlope = last / (w - v);
+  if (Math.abs(prevSlope - lastSlope) <= 1e-6 * Math.max(Math.abs(prevSlope), Math.abs(lastSlope))) {
+    return { value: d - lastSlope * (w - x) };
+  }
+  if (ratio >= 0 && ratio < 0.97 && Math.abs(ratio - earlierRatio) < 0.08) {
+    return { value: d + last * ratio / (1 - ratio) };
+  }
+  const scale = Math.max(Math.abs(b), Math.abs(c), Math.abs(d));
+  if (Math.abs(last) <= scale * 1e-8 && Math.abs(prev) <= scale * 1e-8) return { value: d };
+  if (ratio >= 0.98 && earlierRatio >= 0.98 && Math.sign(last) === Math.sign(d) &&
+      Math.abs(last) > Math.abs(d) * 0.03) return { infinite: Math.sign(d) };
+  return { uncertain: true };
+}
+
+function holeLimit(fn, x) {
+  const left = estimateSide(fn, x, -1)?.value;
+  const right = estimateSide(fn, x, 1)?.value;
+  const d = Math.max(1e-5, Math.abs(x) * Number.EPSILON * 1000);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) {
+    // A damped oscillation has no stable ratio between successive samples.
+    // Compare its envelope at two distances and multiple offsets instead.
+    const envelope = (radius) => Math.max(...[-1.63, -1, -0.71, 0.71, 1, 1.63]
+      .map((m) => Math.abs(fn(x + m * radius))));
+    const far = envelope(d * 100);
+    const near = envelope(d);
+    return Number.isFinite(far) && far > 0 && near < far / 16 && envelope(d / 10) < near / 2 ? 0 : null;
+  }
+  const scale = Math.max(Math.abs(left), Math.abs(right));
+  const closest = Math.max(1e-8, Math.abs(x) * Number.EPSILON * 10);
+  const probeScale = Math.max(Math.abs(fn(x - closest)), Math.abs(fn(x + closest)));
+  if (Math.abs(left - right) > 1e-7 * scale + 8 * Number.EPSILON * probeScale) return null;
+  return Number((left / 2 + right / 2).toPrecision(9));
 }
 
 export function compileEquation(value) {
@@ -317,6 +364,8 @@ function refineZeroOfFn(fn, left, right) {
   if (fa === 0) return a;
   if (fb === 0) return b;
   if (Math.sign(fa) === Math.sign(fb)) return null;
+  const linear = (a * fb - b * fa) / (fb - fa);
+  if (linear > a && linear < b && fn(linear) === 0) return linear;
   const startScale = Math.max(Math.abs(fa), Math.abs(fb));
   let best = Math.abs(fa) < Math.abs(fb) ? a : b;
   let smallest = Math.min(Math.abs(fa), Math.abs(fb));
@@ -339,6 +388,8 @@ function refineZeroOfFn(fn, left, right) {
   }
   // A change of sign across a jump or pole is not evidence of a root. The values
   // must also approach zero, even when the whole function is very small or large.
+  const rounded = Number(best.toPrecision(10));
+  if (rounded > left && rounded < right && fn(rounded) === 0) return rounded;
   return smallest / startScale < 1e-8 ? best : null;
 }
 
@@ -374,7 +425,7 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
   const landmarks = [];
   const addLandmark = (kind, x, y, label) => {
     if (!Number.isFinite(x) || Math.abs(x) > boundary + 1e-9) return;
-    const cleanX = Number(x.toPrecision(10));
+    const cleanX = x;
     const cleanY = Number.isFinite(y) ? Number(y.toPrecision(10)) : null;
     const existing = landmarks.find((item) => Math.abs(item.x - cleanX) <= 1e-5 && item.kind === kind);
     if (existing) return;
@@ -386,7 +437,7 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
   const step = (boundary * 2) / steps;
   const xs = Array.from({ length: steps + 1 }, (_, i) => addCoordinate(-boundary, i * step));
   for (const check of graph.domainChecks || []) {
-    if (check.kind !== 'zero') continue;
+    if (!['zero', 'positive'].includes(check.kind)) continue;
     const evalDenom = (x) => check.evaluate({ x, y: 0 });
     const values = xs.map(evalDenom);
     if (!values.some((v) => Number.isFinite(v) && v !== 0)) continue;
@@ -398,7 +449,15 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
       if (y !== null) {
         addLandmark('open-point', x, y, `Open point (hole) at (${formatNumber(x)}, ${formatNumber(y)})`);
       } else {
-        addLandmark('asymptote', x, null, `Vertical asymptote or undefined at x = ${formatNumber(x)}`);
+        const left = estimateSide((v) => graph.yAt(v), x, -1);
+        const right = estimateSide((v) => graph.yAt(v), x, 1);
+        if (left?.infinite || right?.infinite) {
+          addLandmark('asymptote', x, null, `Vertical asymptote at x = ${formatNumber(x)}`);
+        } else if (left?.value !== undefined && right?.value !== undefined) {
+          addLandmark('jump', x, null, `Jump at x = ${formatNumber(x)}`);
+        } else {
+          addLandmark('asymptote', x, null, `Undefined at x = ${formatNumber(x)}`);
+        }
       }
     };
     for (let i = 0; i <= steps; i += 1) {
@@ -446,7 +505,7 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
       const a = samples[i];
       const b = samples[i + 1];
       if (!a.defined) continue;
-      if (a.y === 0) addRoot(a.x);
+      if (a.y === 0 && samples[i - 1]?.y !== 0 && b?.y !== 0) addRoot(a.x);
       if (b?.defined && a.y !== 0 && b.y !== 0 && Math.sign(a.y) !== Math.sign(b.y) &&
           graph.isContinuousBetween(a.x, b.x)) {
         const rootX = refineZeroOfFn((x) => graph.yAt(x), a.x, b.x);
@@ -459,13 +518,13 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
       const curr = samples[i];
       const next = samples[i + 1];
       if (!Number.isFinite(prev.y) || !Number.isFinite(curr.y) || !Number.isFinite(next.y)) continue;
-      const isMin = curr.y <= prev.y && curr.y <= next.y && (curr.y < prev.y || curr.y < next.y);
-      const isMax = curr.y >= prev.y && curr.y >= next.y && (curr.y > prev.y || curr.y > next.y);
+      const isMin = curr.y < prev.y && curr.y < next.y;
+      const isMax = curr.y > prev.y && curr.y > next.y;
       if (!isMin && !isMax) continue;
       // A peak or valley must lie on one continuous piece. Across a pole the
       // samples only look like a turn (tan(x), 1/(x-a)); that is not an extremum.
       if (!graph.isContinuousBetween(prev.x, curr.x) || !graph.isContinuousBetween(curr.x, next.x)) continue;
-      if (landmarks.some((l) => ['open-point', 'asymptote'].includes(l.kind) && l.x >= prev.x && l.x <= next.x)) continue;
+      if (landmarks.some((l) => ['open-point', 'asymptote', 'jump'].includes(l.kind) && l.x >= prev.x && l.x <= next.x)) continue;
 
       let lo = prev.x;
       let hi = next.x;

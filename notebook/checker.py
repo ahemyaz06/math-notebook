@@ -53,12 +53,14 @@ def latex_to_plain(latex):
             if cmd in ('begin', 'end'):
                 skip_group = 1
             elif cmd == 'sqrt':
-                out.append('√')
-                # \sqrt[n]{x}: the index is printed small before the radical in PDFs; drop it.
-                if i + 1 < len(tokens) and tokens[i + 1].group(4) == '[':
-                    while i + 1 < len(tokens) and tokens[i + 1].group(4) != ']':
+                # A PDF typically prints the small root index before the radical.
+                index = re.match(r'\s*\[([^\[\]]+)\]', latex[m.end():])
+                if index:
+                    out.append(latex_to_plain(index[1]))
+                    end = m.end() + index.end()
+                    while i + 1 < len(tokens) and tokens[i + 1].start() < end:
                         i += 1
-                    i += 1
+                out.append('√')
             elif cmd in NAMES:
                 out.append(cmd)
             elif cmd in SYMBOLS:
@@ -271,7 +273,7 @@ def compare(pdf_text, markdown, context=12, math_fonts=None):
         in_math = any(ai_math[max(0, i1 - 1):max(i2, i1 + 1)]) if ai_math else False
         if not (_SIGNIFICANT if in_math else _SIGNIFICANT_TEXT).search(ai_part + pdf_part):
             continue
-        if op == 'replace' and _equivalent(ai_part, pdf_part):
+        if op == 'replace' and in_math and _equivalent(ai_part, pdf_part):
             continue
         line = ai_lines[at] if ai_lines else 0
         # Differences a few characters apart are one mistake ("split" read as "spilt").
@@ -292,7 +294,7 @@ def compare(pdf_text, markdown, context=12, math_fonts=None):
             'ai_context': ai[max(0, i1 - context):i2 + context][:90],
             'pdf_context': pdf[max(0, j1 - context):j2 + context][:90],
         })
-    flags = _drop_moved(flags, ai, pdf)
+    flags = _drop_moved(flags)
     # Some PDFs (OpenStax textbooks, for example) draw every formula as shapes, so their
     # text has the words but no maths. Every equation would then be flagged. Measure how
     # much of the reader's maths the PDF text contains; if it is under half, only words
@@ -321,25 +323,14 @@ def has_math_fonts(fontnames):
     return any(MATH_FONT.search(name or '') for name in fontnames)
 
 
-def _canonical(text):
-    for a, b in _SAME_IN_PDF:
-        text = text.replace(a, '').replace(b, '') if a == '√' else text.replace(a, b)
-    return text
-
-
-def _drop_moved(flags, ai, pdf):
-    """Text the PDF stores in another order (a table beside the questions, a caption
-    above a figure) shows up as 'missing' in one place and 'extra' in another. If the
-    piece is found elsewhere on the other side, it was moved, not misread."""
-    ai_c, pdf_c = _canonical(ai), _canonical(pdf)
-    kept = []
-    for f in flags:
-        if f['kind'] == 'missing' and len(f['pdf']) >= 4 and _canonical(f['pdf']) in ai_c:
-            continue
-        if f['kind'] == 'extra' and len(f['ai']) >= 4 and _canonical(f['ai']) in pdf_c:
-            continue
-        kept.append(f)
-    return kept
+def _drop_moved(flags):
+    """Suppress matching missing and extra passages when the PDF reorders text."""
+    moved = ({f['pdf'] for f in flags if f['kind'] == 'missing'} &
+             {f['ai'] for f in flags if f['kind'] == 'extra'})
+    return [f for f in flags if not (
+        f['kind'] == 'missing' and len(f['pdf']) >= 4 and f['pdf'] in moved or
+        f['kind'] == 'extra' and len(f['ai']) >= 4 and f['ai'] in moved
+    )]
 
 
 def describe(flag):

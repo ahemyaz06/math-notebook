@@ -30,7 +30,7 @@ relying on it.
 
 The notebook needs the other two folders, so keep them together.
 
-See the [0.7.6 changelog](notebook/CHANGELOG.md) for changes since 0.7.5.
+The [changelog](notebook/CHANGELOG.md) lists what changed in 0.7.8, since 0.7.6.
 
 ## Download it (Windows)
 
@@ -43,8 +43,8 @@ old one and keeps your settings.
 
 The [Releases page](https://github.com/ahemyaz06/math-notebook/releases) offers an installer
 and a portable zip for 64-bit Windows 10 and 11. Both read supported PDFs without the AI
-add-on. Version 0.7.6 adds optional PDF equation checking with Tectonic and braille export
-with BrailleBlaster. Install those tools separately if you need them.
+add-on. Optional PDF equation checking needs Tectonic, and braille export needs BrailleBlaster;
+both are installed separately.
 
 - `Math-Notebook-Setup.exe` installs it: a Start menu shortcut, an uninstaller in
   Installed apps, and newer versions install over older ones and keep your settings. It
@@ -87,6 +87,8 @@ portable zip and SHA-256 checksums go into `dist`.
   an equation. **Ctrl+Shift+R** reads the current line with its maths spelled out.
 - **Right arrow** into an equation shows it as its plain text: the arrows move one symbol at a
   time and you can type to change it. When you leave it, it is an equation again.
+- **Ctrl+Z** undoes and **Ctrl+Y** redoes any change, equations included. After a crash, the
+  next start offers to recover unsaved work.
 - Working line by line: **Enter** after an equation starts a new line. **Shift+Enter** (or
   **F11**) copies the equation above down, ready to change.
 - Comments, as in programming: anything after `#` or `//` stays words beside the equation and
@@ -112,7 +114,8 @@ The full guide is [notebook/README.md](notebook/README.md).
 
 The notebook can read maths from many LaTeX PDFs using the text already in the file.
 The optional AI can read scanned pages or describe pictures. It can miss or misread details
-and needs a graphics card with about 8 GB of memory.
+and needs a graphics card with about 8 GB of memory. The model is loaded only while it is
+needed: it stops 10 minutes after its last use, and when the app closes.
 
 From the main folder, run the first command to get the runner and one model. The second
 command is optional and downloads another model (about 6.6 GB):
@@ -151,8 +154,9 @@ Nemeth in BrailleBlaster's Translation settings. The approach follows Owen Petro
 - **Heard with NVDA** by the author: writing, equations in focus and browse mode, stepping
   through an equation, intervals, graph mode and its sounds.
 - **Not yet heard with NVDA**: whether the word "comment" is said before a comment, the
-  Spelling box (F7), the Interval box (Ctrl+Shift+D), the setup's own pages, and the newer
-  graph sounds (the instrument, beep and game voices, and "clearer pitch").
+  Spelling box (F7), the Interval box (Ctrl+Shift+D), the setup's own pages, the newer
+  graph sounds (the instrument, beep and game voices, "clearer pitch" and the Wider stereo
+  choice), undo and redo, and crash recovery.
 - **Tried on one computer only**: Windows 11 with NVDA, MathCAT and Access8Math, US English.
   Other screen readers (JAWS, Narrator), other languages, and macOS or Linux have not been tried.
 - **Course material**: the PDF reader was built and checked on one calculus course's LaTeX

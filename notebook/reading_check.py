@@ -22,11 +22,14 @@ import shutil
 import statistics
 import subprocess
 import tempfile
+import time
 
 import pdf_text_reader as reader
 
 HERE = Path(__file__).resolve().parent
-CACHE = Path(tempfile.gettempdir()) / 'math-notebook-retypeset'
+CACHE = Path(tempfile.gettempdir()) / 'math-notebook-retypeset-untrusted'
+TYPESET_TIMEOUT = 45
+TYPESET_TIMED_OUT = 'Tectonic timed out'
 
 
 def find_tectonic():
@@ -37,7 +40,7 @@ def find_tectonic():
     return None
 
 
-def typeset(tex):
+def typeset(tex, timeout=TYPESET_TIMEOUT):
     """The PDF of a whole .tex document (cached by its text), or (None, the error)."""
     key = hashlib.sha256(tex.encode('utf8')).hexdigest()[:20]
     CACHE.mkdir(parents=True, exist_ok=True)
@@ -52,9 +55,13 @@ def typeset(tex):
         folder = Path(tmp)
         src = folder / f'{key}.tex'
         src.write_text(tex, encoding='utf8')
-        run = subprocess.run([tectonic, '--chatter', 'minimal', '--outdir', str(folder), str(src)],
-                             capture_output=True, text=True, encoding='utf8', errors='replace',
-                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        try:
+            run = subprocess.run([tectonic, '--untrusted', '--chatter', 'minimal', '--outdir', str(folder), str(src)],
+                                 cwd=folder, timeout=timeout, capture_output=True, text=True,
+                                 encoding='utf8', errors='replace',
+                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except subprocess.TimeoutExpired:
+            return None, TYPESET_TIMED_OUT
         output = src.with_suffix('.pdf')
         if run.returncode or not output.exists():
             return None, (run.stderr or run.stdout).strip()[-600:]
@@ -242,7 +249,7 @@ def _bracket_tokens(tex):
             continue
         if tex[k] == '\\':
             m = re.match(r'\\[A-Za-z]+|\\.', tex[k:])
-            k += m.end()
+            k += m.end() if m else 1
             continue
         if tex[k] in '()[]|':
             out.append((k, k + 1, tex[k]))
@@ -296,12 +303,52 @@ def _document(items, size):
             f'\\pagestyle{{empty}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n')
 
 
-def _typeset_all(items, size):
+# Check only the mathematical commands this reader emits. TeX source is
+# executable, and untrusted mode is a second guard for the subprocess itself.
+MATH_COMMANDS = reader.FUNCTIONS | {
+    tex[1:] for tex in reader.SYMBOLS.values() if tex.startswith(chr(92))
+} | set("""
+    frac dfrac tfrac sqrt text mathrm mathbf mathit mathbb mathcal operatorname
+    left right middle overline underline hat bar vec dot ddot tilde widehat widetilde
+    limits nolimits stackrel overset underset displaystyle textstyle scriptstyle
+    quad qquad big Big bigg Bigg bigl bigr Bigl Bigr biggl biggr Biggl Biggr
+    textbackslash textasciicircum textasciitilde
+""".split()) | set('{}|%#&$_ ,;!: ' + chr(92))
+MATH_ENVIRONMENTS = {'cases', 'matrix', 'pmatrix', 'bmatrix', 'vmatrix', 'Vmatrix', 'smallmatrix', 'aligned', 'array'}
+TEX_COMMAND = re.compile(r'\\([A-Za-z]+|[^\n\r])|([$%#\\])')
+
+
+def _math_only(tex):
+    if '^^' in tex or any(ord(c) < 32 and c not in '\n\r\t' for c in tex):
+        return False
+    for match in TEX_COMMAND.finditer(tex):
+        command = match[1]
+        if command in ('begin', 'end'):
+            env = re.match(r'\s*\{([A-Za-z]+)\}', tex[match.end():])
+            if not env or env[1] not in MATH_ENVIRONMENTS:
+                return False
+        elif command not in MATH_COMMANDS:
+            return False
+    return True
+
+
+def _typeset_all(items, size, deadline):
     """For each LaTeX reading, the marks of its two typeset pages, or None if it does not typeset."""
     import pdfplumber
     if not items:
         return []
-    pdf, _err = typeset(_document(items, size))
+    eligible = [i for i, latex in enumerate(items) if _math_only(latex)]
+    if len(eligible) != len(items):
+        out = [None] * len(items)
+        for i, rendered in zip(eligible, _typeset_all([items[i] for i in eligible], size, deadline)):
+            out[i] = rendered
+        return out
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return [None] * len(items)
+    pdf, error = typeset(_document(items, size), timeout=remaining)
+    if error == TYPESET_TIMED_OUT:
+        return [None] * len(items)
     if pdf:
         with pdfplumber.open(pdf) as doc:
             if len(doc.pages) == 2 * len(items):
@@ -310,7 +357,7 @@ def _typeset_all(items, size):
                     out.append([marks(doc.pages[2 * k]), marks(doc.pages[2 * k + 1])])
                 return out
     # One that does not typeset spoils the rest: each alone.
-    return [(_typeset_all([latex], size) or [None])[0] if len(items) > 1 else None for latex in items]
+    return [(_typeset_all([latex], size, deadline) or [None])[0] if len(items) > 1 else None for latex in items]
 
 
 def check_page(page, equations):
@@ -320,12 +367,14 @@ def check_page(page, equations):
     """
     if not equations or not find_tectonic():
         return []
+    deadline = time.monotonic() + TYPESET_TIMEOUT
     size = statistics.median(e['size'] for e in equations)
     on_page = [marks(page, e['box']) for e in equations]
     # The reading as it is, and drawn the other ways the same maths can be (\dfrac for a
     # fraction set large in a line): any that matches says the reading is right.
-    tries = [(k, d) for k, e in enumerate(equations) for d in [e['latex'], *drawings(e['latex'])]]
-    typed = _typeset_all([dress(d, on_page[k][0]) for k, d in tries], size)
+    tries = [(k, d) for k, e in enumerate(equations) if _math_only(e['latex'])
+             for d in [e['latex'], *drawings(e['latex'])]]
+    typed = _typeset_all([dress(d, on_page[k][0]) for k, d in tries], size, deadline)
     results = [None] * len(equations)
     typed_first = {}  # the reading itself, typeset (first of its drawings)
     for (k, _d), both in zip(tries, typed):
@@ -340,15 +389,15 @@ def check_page(page, equations):
     # kept only if it matches the page. When none does, the one closest to the page is the
     # start of the next step (a word read with a subscript in a numerator and in a denominator
     # takes two steps), up to three steps.
-    current = {k: (equations[k]['latex'], None) for k, (v, _) in enumerate(results) if v != 'same'}
+    current = {k: (equations[k]['latex'], None) for k, (v, _) in enumerate(results) if v != 'same' and _math_only(equations[k]['latex'])}
     for _step in range(3):
-        if not current:
+        if not current or time.monotonic() >= deadline:
             break
         # (Each as written and with its fractions large: the drawings most sources use, so that
         # a page with a misreading still takes seconds.)
         tries = [(k, alt, drawn) for k, (tex, _score) in current.items() for alt in alternatives(tex)
                  for drawn in [alt, *drawings(alt)[:1]]]
-        typed = _typeset_all([dress(drawn, on_page[k][0]) for k, _alt, drawn in tries], size)
+        typed = _typeset_all([dress(drawn, on_page[k][0]) for k, _alt, drawn in tries], size, deadline)
         best = {}
         for (k, alt, _drawn), both in zip(tries, typed):
             if not both or results[k][0] == 'fixed':

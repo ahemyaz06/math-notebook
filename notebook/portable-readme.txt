@@ -1,4 +1,4 @@
-MATH NOTEBOOK 0.7.6 BETA (portable)
+MATH NOTEBOOK 0.7.8 BETA (portable)
 
 A document editor for maths that works like Word and reads well with NVDA and MathCAT.
 Nothing to install, and no AI: everything is done by exact rules on this computer.
@@ -22,6 +22,7 @@ Insert > Table              a table; Tab moves between cells, Tab in the last ce
 Ctrl+Enter                  page break
 Ctrl+F, F3, Ctrl+H          find, find again, replace
 Ctrl+PageDown, Ctrl+PageUp  next and previous heading; Ctrl+Shift+H lists the headings
+Ctrl+Z, Ctrl+Y              undo, redo (any change, equations included)
 Ctrl+S, Ctrl+P              save, print
 Ctrl+Shift+W                export as a Word document (equations are real Word equations)
 File > Export as PDF        a tagged PDF

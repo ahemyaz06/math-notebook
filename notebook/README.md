@@ -52,11 +52,21 @@ user by default, with all users as a choice. The setup is unsigned, so Windows m
 when it starts. The app keeps settings, imported PDFs and window files in
 `%LOCALAPPDATA%\MathNotebook`. Run a newer setup to upgrade in place and keep your data.
 You can uninstall through Windows Installed apps and choose whether to keep the data.
-Help > About shows the version in either package. See [what changed in 0.7.6](CHANGELOG.md).
+Help > About shows the version in either package. See [what changed in 0.7.8](CHANGELOG.md).
 
 
 ## Writing (the keys are Word's)
 
+**Recovering work after a crash.** The desktop app keeps local drafts of unsaved
+notebook edits, including untitled work. When you restart, choose a draft to recover
+or use File > Recover unsaved work later. The recovered notebook opens as an unsaved
+copy. Press Ctrl+S to choose where to save it. The previous file is preserved until
+a save succeeds. Discard a draft from the recovery list when you no longer need it.
+
+- Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes, for every change: typing, and also
+  equations made, lines copied down, tables, Replace and spelling changes. Typing is one step
+  until you move the cursor or use a command. The status line says the line you land on. In
+  a dialog's text box, Ctrl+Z undoes only what you typed there.
 - Type normally. Ctrl+B, Ctrl+I, Ctrl+U: bold, italic, underline (the status line says
   "Bold on" or "off"). Ctrl+Alt+1, 2, 3 make headings of level 1, 2, 3 (NVDA says the
   same level); Ctrl+Alt+0 normal text.
@@ -294,7 +304,8 @@ everything back. Settings are saved in `%LOCALAPPDATA%\MathNotebook\settings.jso
 - Graph sound (from Sound Lab): the sound (Gentle by default; also instruments, beeps and game
   sounds, each heard as you move through the list, and Listen plays a whole example), clearer
   pitch (notes slide from the last height; off is the original sound), the slope sound, the bass
-  line while playing (x and height, x only, height only, off), the step, playing speed, sounds
+  line while playing (x and height, x only, height only, off), stereo (Original, or Wider, which
+  places points further from the middle so left and right are easier to tell apart), the step, playing speed, sounds
   for points of interest, step volume, bass volume. The Sound guide button there (also in the
   Help menu) plays every sound with what it means, and a quiz: play a mystery sound, then
   choose what it was.
@@ -344,7 +355,9 @@ page, Qwen3.6-35B-A3B none. Qwen3.6-35B-A3B is the default: by default its files
 `recognition-lab\bin\llama-cuda`; other locations go in `local-paths.json` in the main folder
 (see `recognition-lab\vlm_helper.py`). Part of the model stays in system memory (needs about 8 GB VRAM and 16 GB free RAM). At
 start-up it puts as many expert layers on the graphics card as fit in the free memory,
-so close other programs that use the graphics card before importing a PDF.
+so close other programs that use the graphics card before importing a PDF. The model is
+loaded only while it is needed: it is stopped 10 minutes after its last use (never while it
+is reading) and when Math Notebook closes, also if the app crashes.
 Another model can be chosen in Settings > Reading PDFs (the environment variable
 MATH_NOTEBOOK_MODELS sets the default).
 
@@ -380,16 +393,17 @@ has not:
   language, or mixing languages, has not been tried.
 - Intervals: `y = 2x, (1, 2)` (round brackets straight after a comma) is not taken as an
   interval, because it could be a point; write `on (1, 2)` or `x in (1, 2)`. Only intervals of
-  x are understood (not of y or t), and only one interval per equation.
+  x are understood (not of y or t), and only one interval per equation. Curly braces,
+  `x on {-2pi, 2pi}`, are a set (just those numbers), not an interval; use `[ ]` or `( )`.
 - Comments: a `#` or `//` always starts a comment beside an equation; there is no way to
   write those signs as maths. Everything after the sign, to the end of the line, is the
   comment, even maths.
 - Stepping through an equation shows it as plain text. Equations from PDFs with LaTeX that
   plain text cannot say exactly (matrices, unusual symbols) come back exactly only if you
   change nothing; if you change them, they are rebuilt from the plain text.
-- Undo (Ctrl+Z) undoes typing and formatting, but not equations, tables, lists or page
-  breaks inserted by commands, nor Replace, nor Spelling changes, nor stepping into an
-  equation.
+- Undo (Ctrl+Z) keeps up to 200 steps for the open document; opening, importing or starting
+  a new document starts the list again. Undo, crash recovery and the Wider stereo choice have
+  been checked by the automatic tests, not yet heard with NVDA.
 - Vertical lines are described but not traced (they are not functions of x).
 - Drawing graphs is not built yet (planned as its own lab). Font sizes, colours and
   alignment are not offered.

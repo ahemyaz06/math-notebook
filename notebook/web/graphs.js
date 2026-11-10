@@ -7,7 +7,7 @@ import { compileEquation, compileExpression, detectLandmarks, formatNumber } fro
 // How numbers are said while exploring a graph (Settings > Graph sound): 'half' rounds to the
 // nearest half (4.1931 is 4, 0.894 is 1, 0.00004 is 0), 'tenth' to one decimal, 'exact' keeps
 // six digits. What is written into the document (makeGraph, studentGraph) has at most two
-// decimals (1.41421 is 1.41; the owner asked, 2026-11-05), whatever the setting.
+// decimals (1.41421 is 1.41), whatever the setting.
 let numberStyle = 'exact';
 export function setNumberStyle(style) {
   if (['half', 'tenth', 'exact'].includes(style)) numberStyle = style;
@@ -31,7 +31,13 @@ export function exactly(work) {
 
 // ---------- the parsed maths -> Sound Lab's expression syntax ----------
 
-const INVERSE = { sin: 'asin', cos: 'acos', tan: 'atan' };
+const INVERSE = { sin: 'asin', cos: 'acos', tan: 'atan', sec: 'arcsec', csc: 'arccsc', cot: 'arccot',
+  sinh: 'asinh', cosh: 'acosh', tanh: 'atanh' };
+
+function isInversePower(node) {
+  while (node?.type === 'paren') node = node.inner;
+  return node?.type === 'neg' && node.arg.type === 'num' && Number(node.arg.value) === 1;
+}
 
 function graphText(n) {
   switch (n.type) {
@@ -61,11 +67,13 @@ function graphText(n) {
       const a = graphText(n.arg);
       // sin^{-1} x is arcsin x; sin^2 x is (sin x)^2.
       const power = n.power ? graphText(n.power) : null;
-      if (power && /^\(?\(-\(1\)\)\)?$|^-1$/.test(power.replace(/\s/g, '')) && INVERSE[n.name]) return `${INVERSE[n.name]}(${a})`;
+      if (isInversePower(n.power) && INVERSE[n.name]) return `${INVERSE[n.name]}(${a})`;
       const base = {
         sin: `sin(${a})`, cos: `cos(${a})`, tan: `tan(${a})`, sec: `(1/cos(${a}))`, csc: `(1/sin(${a}))`, cot: `(cos(${a})/sin(${a}))`,
-        arcsin: `asin(${a})`, arccos: `acos(${a})`, arctan: `atan(${a})`, ln: `ln(${a})`, log: `log(${a})`, exp: `exp(${a})`,
-        sinh: `((exp(${a})-exp(-(${a})))/2)`, cosh: `((exp(${a})+exp(-(${a})))/2)`, tanh: `((exp(${a})-exp(-(${a})))/(exp(${a})+exp(-(${a}))))`,
+        arcsin: `asin(${a})`, arccos: `acos(${a})`, arctan: `atan(${a})`, ln: `ln(${a})`, log: `log(${a})`, sign: `sign(${a})`, exp: `exp(${a})`,
+        sinh: `sinh(${a})`, cosh: `cosh(${a})`, tanh: `tanh(${a})`, sech: `sech(${a})`, csch: `csch(${a})`, coth: `coth(${a})`,
+        asinh: `asinh(${a})`, acosh: `acosh(${a})`, atanh: `atanh(${a})`,
+        arcsec: `arcsec(${a})`, arccsc: `arccsc(${a})`, arccot: `arccot(${a})`,
       }[n.name];
       if (!base) throw new Error(`${n.name} cannot be graphed yet.`);
       // log_b x = ln x / ln b
@@ -173,7 +181,7 @@ export function compileFunction(source, format = /\\[A-Za-z]|[_^]\{/.test(source
   const sci = /(^|[^A-Za-z\d.])(\d*\.?\d+)[eE]([+-]?\d+)(?![\d.])/.exec(String(source));
   if (sci) throw new Error(`${sci[2]}e${sci[3]} could mean ${sci[2]} times 10 to the ${sci[3]}, or ${sci[2]} times e${/^[+-]/.test(sci[3]) ? `, ${sci[3][0] === '-' ? 'minus' : 'plus'} ${sci[3].slice(1)}` : ` times ${sci[3]}`}. Write ${sci[2]}*10^(${sci[3]}) for the number, or put a space or * around e.`);
   // Functions the graphs cannot draw yet, said by name (not "the letter f has no value").
-  const unsupported = /\b(floor|ceil|ceiling|round|sgn|sign|max|min|mod|gcd|lcm)\s*\(/.exec(String(source));
+  const unsupported = /\b(floor|ceil|ceiling|round|sgn|max|min|mod|gcd|lcm)\s*\(/.exec(String(source));
   if (unsupported) throw new Error(`${unsupported[1]} is not supported in graphs yet.`);
   // A sentence's full stop or comma after the maths (g(x) = x^{3}.) is not part of it.
   const latex = (format === 'latex' ? source.trim() : plainToLatex(source)).replace(/\s*[.,;]\s*$/, '');
@@ -513,6 +521,7 @@ export function spokenLabel(l) {
     case 'y-axis': return `crosses the y-axis at ${say(l.y)}`;
     case 'origin': return 'the origin, 0, 0';
     case 'maximum': return `peak at ${at}`;
+    case 'jump': return `jump at x = ${say(l.x)}`;
     case 'minimum': return `valley at ${at}`;
     case 'open-point': return `hole at ${at}`;
     case 'solid-point': return `solid dot at ${at}`;
@@ -685,7 +694,7 @@ export const HIDEABLE = {
   zeros: { name: 'where it crosses the x-axis (zeros)', kinds: ['x-axis', 'origin'] },
   yIntercept: { name: 'where it crosses the y-axis', kinds: ['y-axis', 'origin'] },
   extrema: { name: 'peaks and valleys', kinds: ['maximum', 'minimum'] },
-  holes: { name: 'holes, jumps and dots', kinds: ['open-point', 'solid-point'] },
+  holes: { name: 'holes, jumps and dots', kinds: ['open-point', 'solid-point', 'jump'] },
   asymptotes: { name: 'asymptotes', kinds: ['asymptote'] },
   corners: { name: 'sharp corners, cusps and where the curve ends', kinds: ['corner', 'endpoint'] },
 };
@@ -708,6 +717,7 @@ export function describeFunction(f, [x0, x1], hide = []) {
   if (yInt) parts.push(`crosses the y-axis at y = ${say(yInt.y ?? 0)}`);
   for (const l of list('maximum')) parts.push(`peak at ${say(l.x)}, ${say(l.y)}`);
   for (const l of list('minimum')) parts.push(`valley at ${say(l.x)}, ${say(l.y)}`);
+  for (const l of list('jump')) parts.push(`jump at x = ${say(l.x)}`);
   for (const l of list('open-point')) parts.push(`hole at ${say(l.x)}, ${say(l.y)}`);
   for (const l of list('asymptote')) parts.push(`vertical asymptote at x = ${say(l.x)}`);
   // 'beyond': a drawing shows only what is drawn, so nothing is said about far past its edges.
@@ -765,13 +775,15 @@ function studentCopy(graph) {
   const hidden = hiddenKinds(hide);
   functions.forEach((f, i) => {
     const boundary = Math.max(Math.abs(span.x[0]), Math.abs(span.x[1]));
-    const marks = landmarksOf(f.graph, boundary).filter((l) => !hidden.has(l.kind) && l.x >= span.x[0] - 1e-9 && l.x <= span.x[1] + 1e-9);
+    const inWindow = landmarksOf(f.graph, boundary).filter((l) => l.x >= span.x[0] - 1e-9 && l.x <= span.x[1] + 1e-9);
+    const marks = inWindow.filter((l) => !hidden.has(l.kind));
     out.curves.push({
       kind: 'curve', label: opts.names?.[i] || (functions.length > 1 ? `function ${i + 1}` : 'the function'), color: '',
       samples: sampleCurve(f.graph, span.x),
       turning_points: marks.filter((l) => l.kind === 'maximum' || l.kind === 'minimum').map((l) => ({ kind: l.kind === 'maximum' ? 'peak' : 'valley', at: [l.x, l.y] })),
-      crosses_x_axis_at: marks.filter((l) => l.kind === 'x-axis' || (l.kind === 'origin' && !hide.includes('zeros'))).map((l) => l.x),
-      crosses_y_axis_at: hide.includes('yIntercept') ? null : (marks.find((l) => l.kind === 'y-axis' || l.kind === 'origin')?.y ?? null),
+      crosses_x_axis_at: marks.filter((l) => !l.touches && ['x-axis', 'origin'].includes(l.kind)).map((l) => l.x),
+      touches_x_axis_at: marks.filter((l) => l.touches && ['x-axis', 'origin'].includes(l.kind)).map((l) => l.x),
+      crosses_y_axis_at: hide.includes('yIntercept') ? null : (inWindow.find((l) => l.kind === 'y-axis' || l.kind === 'origin')?.y ?? null),
       asymptotes: marks.filter((l) => l.kind === 'asymptote').map((l) => l.x),
       // Sharp corners, cusps and where the curve starts or ends, with the slopes the sounds use.
       shapes: marks.filter((l) => l.kind === 'corner' || l.kind === 'endpoint').map((l) => ({ kind: l.kind, shape: l.shape, at: [l.x, l.y],

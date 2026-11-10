@@ -38,8 +38,11 @@ function list(block) {
   let level = base;
   let open = false;
   for (const item of block.items) {
-    while (level < item.level) { level += 1; out += start(level); open = false; }
-    while (level > item.level) { out += `</li></${tag}>`; level -= 1; }
+    // A skipped level still needs a parent item. A later item above the
+    // first item's level belongs in this list's root.
+    const target = Math.max(base, Math.min(item.level ?? base, level + 1));
+    while (level < target) { level += 1; out += start(level); open = false; }
+    while (level > target) { out += '</li></' + tag + '>'; level -= 1; }
     if (open) out += '</li>';
     out += `<li>${runs(item.runs)}`;
     open = true;
@@ -72,7 +75,10 @@ const piecesAsLines = (latex) => { const p = pieces(latex); return p && [`<p>${p
 
 export function brailleHtml(blocks, title) {
   const body = blocks.map((b) => {
-    if (b.type === 'heading') return `<h${Math.min(6, b.level)}>${runs(b.runs)}</h${Math.min(6, b.level)}>`;
+    if (b.type === 'heading') {
+      const level = Math.max(1, Math.min(6, b.level || 1));
+      return '<h' + level + '>' + runs(b.runs) + '</h' + level + '>';
+    }
     if (b.type === 'equation') return piecesAsLines(b.latex) || `<p class="math">${mathXml(b.latex, true)}</p>`;
     if (b.type === 'list') return list(b);
     if (b.type === 'table') {

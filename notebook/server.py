@@ -4,7 +4,10 @@ from pathlib import Path
 import json
 import mimetypes
 import os
+import secrets
 import sys
+import threading
+import time
 import urllib.parse
 import webbrowser
 
@@ -17,6 +20,7 @@ import spelling
 WEB = core.ROOT / 'web'
 SOUND = core.ROOT.parent / 'sound-lab' / 'public'
 PORT = int(os.environ.get('MATH_NOTEBOOK_PORT', '4190'))
+DESKTOP_TOKEN = os.environ.get('MATH_NOTEBOOK_DESKTOP_TOKEN')
 def _library():
     """The folder whose PDFs the start page lists: MATH_NOTEBOOK_LIBRARY, or "pdf_folder" in
     ../local-paths.json (this computer's own, not shared), or Documents\\Math Notebook PDFs."""
@@ -37,21 +41,8 @@ mimetypes.add_type('text/javascript', '.mjs')
 mimetypes.add_type('font/woff2', '.woff2')
 
 
-def installed_models():
-    """Reading models whose files are on this computer, plus the ones already chosen."""
-    if not app_settings.AI:
-        return []  # the AI add-on is not installed
-    try:
-        import vlm_helper
-        names = [name for name in vlm_helper.PROFILES if vlm_helper.is_vlm_installed(name)]
-    except Exception:
-        names = []
-    s = app_settings.load()
-    return list(dict.fromkeys(names + [s['reading_model']] + ([s['second_model']] if s['second_model'] else [])))
-
-
 def settings_payload():
-    return {'values': app_settings.load(), 'defaults': app_settings.defaults(), 'models': installed_models(),
+    return {'values': app_settings.load(), 'defaults': app_settings.defaults(), 'models': app_settings.installed_models(),
             'ai': app_settings.ai_enabled(), 'ai_installed': app_settings.AI}
 
 
@@ -62,13 +53,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # Only this computer's own pages may talk to the server.
-    def _allowed(self):
+    def _allowed(self, *, writing=False):
         port = self.server.server_address[1]
         hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
         if self.headers.get('Host') not in hosts:
             return False
         origin = self.headers.get('Origin')
-        return origin is None or origin in {f'http://{h}' for h in hosts}
+        if origin is not None:
+            return origin == 'http://' + self.headers['Host']
+        if not writing:
+            return True
+        # Browser writes carry Origin. The Electron main process cannot use that
+        # browser guarantee, so it proves ownership with a per-launch secret.
+        token = self.headers.get('X-Local-Token', '')
+        return bool(DESKTOP_TOKEN and token.isascii() and secrets.compare_digest(token, DESKTOP_TOKEN))
 
     def _send(self, code, body, kind='application/json; charset=utf-8'):
         data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode('utf-8')
@@ -77,6 +75,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
+        self.send_header('X-Frame-Options', 'DENY')
         self.end_headers()
         self.wfile.write(data)
 
@@ -90,6 +90,8 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in url.path.split('/') if p]
         try:
             if parts[:1] == ['api']:
+                if self.headers.get('Sec-Fetch-Site') not in (None, 'none', 'same-origin'):
+                    return self._error(403, 'Not allowed.')
                 return self._api_get(parts[1:])
             return self._static(url.path)
         except (ValueError, FileNotFoundError) as exc:
@@ -135,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
         raise FileNotFoundError('Not found.')
 
     def do_POST(self):
-        if not self._allowed():
+        if not self._allowed(writing=True):
             return self._error(403, 'Not allowed.')
         try:
             length = int(self.headers.get('Content-Length') or 0)
@@ -154,7 +156,7 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ['api', 'settings']:
             try:
                 changes = json.loads(body.decode('utf-8') or '{}')
-                app_settings.save(changes, installed_models())
+                app_settings.save(changes, app_settings.installed_models())
             except (ValueError, UnicodeDecodeError) as exc:
                 return self._error(400, str(exc) or 'The settings were not understood.')
             return self._send(200, settings_payload())
@@ -232,7 +234,42 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, {'meta': meta})
 
 
+def _end_with_the_app(pid):
+    """Started by the desktop app, the reader ends when the app does, even when the app crashes.
+    The AI model this reader started is stopped with it (and Windows ends it anyway; see
+    vlm_helper). It waits on the app's process, not on stdin: a thread blocked reading stdin
+    makes starting another program hang on Windows, and reading a PDF starts some."""
+    try:
+        if os.name == 'nt':
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            app = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE: only to wait for it
+            if not app:
+                return  # cannot watch it; the app still stops the reader when it closes
+            kernel32.WaitForSingleObject(app, 0xFFFFFFFF)
+        else:
+            while True:
+                os.kill(pid, 0)
+                time.sleep(2)
+    except (OSError, ValueError):
+        pass
+    vlm = sys.modules.get('vlm_helper')
+    if vlm is not None and getattr(vlm, '_owned', None) is not None:
+        try:
+            vlm.stop_vlm_server()
+        except Exception:
+            pass
+    os._exit(0)
+
+
 def main():
+    app_pid = os.environ.get('MATH_NOTEBOOK_APP_PID', '')
+    if app_pid.isdigit():
+        threading.Thread(target=_end_with_the_app, args=(int(app_pid),), daemon=True, name='end-with-the-app').start()
     server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     server.reader = core.Reader()
     url = f'http://127.0.0.1:{server.server_address[1]}/'

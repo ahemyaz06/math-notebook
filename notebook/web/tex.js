@@ -61,6 +61,7 @@ function expandMacros(src, macros) {
   // A letter name ends where the letters do; a symbol name is that one symbol.
   const re = new RegExp(`\\\\(${names.join('|')})(?<=\\\\[^A-Za-z]|[A-Za-z](?![A-Za-z]))`, 'g');
   let out = src;
+  const maxLength = Math.max(src.length, 2 * 1024 * 1024);
   for (let round = 0; round < 10; round += 1) {
     let changed = false;
     let result = '';
@@ -76,10 +77,12 @@ function expandMacros(src, macros) {
         if (g) { values.push(g[0]); i = g[1]; } else { while (out[i] === ' ') i += 1; values.push(out[i] ?? ''); i += 1; }
       }
       result += out.slice(pos, m.index) + body.replace(/#(\d)/g, (_, n) => values[Number(n) - 1] ?? '');
+      if (result.length > maxLength) throw new Error('The LaTeX commands expand to too much text.');
       pos = i;
       re.lastIndex = i;
       changed = true;
     }
+    if (result.length + out.length - pos > maxLength) throw new Error('The LaTeX commands expand to too much text.');
     out = result + out.slice(pos);
     if (!changed) break;
   }
@@ -547,20 +550,49 @@ export function pgfToPlain(expr) {
   let s = expr.replace(/(^|[^A-Za-z])\(\s*\\x\s*\)/g, '$1x').replace(/\\x\b/g, 'x').replace(/\s+/g, ' ').trim();
   // In pgfplots maths 1e-9 is always a number in scientific notation.
   s = s.replace(/(^|[^A-Za-z\d.])(\d*\.?\d+)[eE]([+-]?\d+)(?![\d.])/g, '$1($2*10^($3))');
-  let out = '';
-  for (let i = 0; i < s.length;) {
-    const m = /^(sin|cos|tan|sec|cosec|csc|cot)\s*\(/.exec(s.slice(i));
-    if (!m) { out += s[i]; i += 1; continue; }
-    let depth = 0, j = i + m[0].length - 1;
-    for (; j < s.length; j += 1) { if (s[j] === '(') depth += 1; else if (s[j] === ')') { depth -= 1; if (depth === 0) break; } }
-    const arg = s.slice(i + m[0].length, j);
-    // Radians: sin(deg(x)) in pgfplots, or TikZ's own sin(\x r) (r after the angle).
-    const deg = /^\s*deg\s*\((.*)\)\s*$/.exec(arg) || /^(.*\S)\s+r\s*$/.exec(arg);
-    const name = m[1] === 'cosec' ? 'csc' : m[1];
-    out += deg ? `${name}(${pgfToPlain(deg[1])})` : `${name}((${pgfToPlain(arg)})*pi/180)`;
-    i = j + 1;
+  return rewriteCalls(s, (name, arg, convert) => {
+    if (PGF_TRIG.has(name)) {
+      const radians = fullCall(arg, /^deg\s*(?=\()/) || /^(.*\S)\s+r\s*$/.exec(arg)?.[1];
+      const trig = name === 'cosec' ? 'csc' : name;
+      return trig + '(' + (radians ? convert(radians) : '(' + convert(arg) + ')*pi/180') + ')';
+    }
+    if (name === 'rad') {
+      const name = /^(asin|acos|atan)\b/.exec(arg.trim())?.[1];
+      const inverse = name ? fullCall(arg, /^(asin|acos|atan)\s*(?=\()/) : null;
+      if (inverse !== null) return name + '(' + convert(inverse) + ')';
+      return '((' + convert(arg) + ')*pi/180)';
+    }
+    if (PGF_INVERSE.has(name)) return '(' + name + '(' + convert(arg) + ')*180/pi)';
+    if (name === 'log10' || name === 'log') return (name === 'log10' ? 'log' : 'ln') + '(' + convert(arg) + ')';
+    if (name === 'pow') {
+      const parts = splitTop(arg, ',');
+      if (parts.length === 2) return '(' + convert(parts[0]) + ')^(' + convert(parts[1]) + ')';
+    }
+    return name + '(' + convert(arg) + ')';
+  });
+}
+
+const PGF_TRIG = new Set(['sin', 'cos', 'tan', 'sec', 'csc', 'cosec', 'cot']);
+const PGF_INVERSE = new Set(['asin', 'acos', 'atan']);
+
+function fullCall(source, pattern) {
+  const text = source.trim();
+  const head = pattern.exec(text);
+  if (!head) return null;
+  const arg = group(text, head[0].length, '(', ')');
+  return arg?.[1] === text.length ? arg[0] : null;
+}
+
+function rewriteCalls(source, rewrite) {
+  let out = '', pos = 0;
+  const calls = /[A-Za-z][A-Za-z0-9_]*\s*(?=\()/g;
+  for (let match = calls.exec(source); match; match = calls.exec(source)) {
+    const arg = group(source, calls.lastIndex, '(', ')');
+    if (!arg) continue;
+    out += source.slice(pos, match.index) + rewrite(match[0].trim(), arg[0], (text) => rewriteCalls(text, rewrite));
+    calls.lastIndex = pos = arg[1];
   }
-  return out.replace(/\blog10\(/g, 'log(').replace(/\bpow\(([^,]+),([^)]+)\)/g, '($1)^($2)');
+  return out + source.slice(pos);
 }
 
 function keyValues(opts) {
@@ -1002,7 +1034,6 @@ export function graphFromPgfplots(code) {
 
 // ---------- a graph as pgfplots code ----------
 
-const PGF_NAMES = { log: 'log10', asin: 'rad(asin', acos: 'rad(acos', atan: 'rad(atan' };
 export function graphToPgfplots(graph) {
   const lines = [];
   const [x0, x1] = graph.span.x, [y0, y1] = graph.span.y;
@@ -1031,20 +1062,13 @@ export function graphToPgfplots(graph) {
 
 // Sound Lab syntax -> pgfplots maths: trig of radians is sin(deg(x)).
 function toPgf(text) {
-  let s = text;
-  s = s.replace(/\b(sin|cos|tan)\(/g, '$1(deg(').replace(/\bcbrt\(/g, 'CBRT(');
-  // close the deg( we opened: walk the brackets
-  let out = '';
-  const stack = [];
-  for (let i = 0; i < s.length; i += 1) {
-    const m = /^(sin|cos|tan)\(deg\(/.exec(s.slice(i));
-    if (m) { out += m[0]; stack.push('deg'); i += m[0].length - 1; continue; }
-    if (s[i] === '(') { stack.push('('); out += '('; continue; }
-    if (s[i] === ')') { const top = stack.pop(); out += top === 'deg' ? '))' : ')'; continue; }
-    out += s[i];
-  }
-  out = out.replace(/\bCBRT\(([^()]*(?:\([^()]*\))*[^()]*)\)/g, '(sign($1)*abs($1)^(1/3))');
-  for (const [k, v] of Object.entries(PGF_NAMES)) out = out.replace(new RegExp(`\\b${k}\\(([^()]*)\\)`, 'g'), v.includes('(') ? `${v}($1))` : `${v}($1)`);
+  let out = rewriteCalls(text, (name, arg, convert) => {
+    const value = convert(arg);
+    if (PGF_TRIG.has(name)) return name + '(deg(' + value + '))';
+    if (PGF_INVERSE.has(name)) return 'rad(' + name + '(' + value + '))';
+    if (name === 'cbrt') return '(sign(' + value + ')*abs(' + value + ')^(1/3))';
+    return (name === 'log' ? 'log10' : name) + '(' + value + ')';
+  });
   // Brackets around one letter or number are not needed: sin(deg((x))) -> sin(deg(x)), ((x)^(2)) -> (x^2).
   for (let before = ''; before !== out;) {
     before = out;

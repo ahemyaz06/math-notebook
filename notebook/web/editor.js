@@ -20,6 +20,25 @@ let dirty = false;
 let documentRevision = 0;
 let editRevision = 0;
 let importing = null;
+let saving = null;
+let draftTimer = null;
+let draftWriting = false;
+let draftWaitingSince = 0;
+let draftWriteFailed = false;
+// The recovery draft is written once typing pauses, not while every key is pressed: copying a
+// long notebook full of equations on each pause in typing made the editor stutter. Someone who
+// never pauses still gets a draft every half minute.
+const DRAFT_PAUSE = 1500;
+const DRAFT_LONGEST_WAIT = 30000;
+// Undo and redo (Ctrl+Z, Ctrl+Y): whole states of the document; see "undo and redo" below.
+const UNDO_LIMIT = 200;
+const undoStack = [];
+const redoStack = [];
+let undoBase = null; // the document as it is after the last step kept
+let undoRevision = -1; // the document undoBase belongs to (documentRevision)
+let typingStep = false; // typed since undoBase; undoBase is taken again when the typing stops
+let undoing = false;
+let lastDocCaret = null; // a live range: where the cursor last was in the document
 
 // ---------- small helpers ----------
 
@@ -29,8 +48,12 @@ function say(text) {
   $('status').textContent = '';
   setTimeout(() => { $('status').textContent = text; }, 30);
 }
-function setDirty(value) {
-  if (value) editRevision += 1;
+function setDirty(value, typing = false) {
+  if (value) {
+    editRevision += 1;
+    queueDraft();
+    keepUndoStep(typing);
+  }
   dirty = value;
   showMode(); // the title: name, unsaved star, Teacher mode
 }
@@ -197,7 +220,8 @@ function pageBlocks(record, docId) {
 
 // ---------- importing a PDF ----------
 
-function switchDocument() {
+function switchDocument(recovering = false) {
+  if (!recovering) clearDraft()?.catch(() => say('Could not remove the previous recovery draft.'));
   // The reader can finish caching the old PDF, but its callbacks no longer own this document.
   documentRevision += 1;
   importing = null;
@@ -357,19 +381,19 @@ function isEmpty() {
   return !doc.textContent.trim() && !doc.querySelector('.eq, .graph-line');
 }
 
-function serialize() {
-  settleEquationText();
+function serialize({ html } = {}) {
+  if (html === undefined) settleEquationText();
   const used = new Set([...doc.querySelectorAll('[data-graph-id]')].map((n) => n.dataset.graphId));
   if (studentView) {
     // Saving while previewing saves the teacher's document, not what students get.
     const keep = studentView.graphs;
     const ids = new Set([...studentView.html.matchAll(/data-graph-id="([^"]+)"/g)].map((m) => m[1]));
-    return JSON.stringify({ format: 'math-notebook', version: 1, name: docName, teacher: true, html: studentView.html,
+    return JSON.stringify({ format: 'math-notebook', version: 1, name: docName, teacher: true, html: html ?? studentView.html,
       graphs: Object.fromEntries([...keep].filter(([id]) => ids.has(id))) });
   }
   return JSON.stringify({
     format: 'math-notebook', version: 1, name: docName, teacher: teacherMode || undefined,
-    html: doc.innerHTML,
+    html: html ?? doc.innerHTML,
     graphs: Object.fromEntries([...graphs].filter(([id]) => used.has(id))),
   });
 }
@@ -418,20 +442,28 @@ function sanitizeInto(target, html) {
   markComments(target); // a saved file keeps the class; the role is put back here
 }
 
-function loadNotebook(text, path) {
+function loadNotebook(text, path, recovered = null) {
   const data = JSON.parse(text);
   if (data.format !== 'math-notebook') throw new Error('This is not a Math Notebook file.');
-  switchDocument();
+  switchDocument(Boolean(recovered));
+  if (studentView) togglePreview(false);
   graphs.clear();
   for (const [id, g] of Object.entries(data.graphs || {})) graphs.set(id, g);
-  if (studentView) togglePreview(false);
   sanitizeInto(doc, data.html || '');
   setTeacherMode(Boolean(data.teacher), true);
   docName = data.name || 'Untitled';
   filePath = path;
-  setDirty(false);
   doc.focus();
-  say(`Opened ${docName}.`);
+  if (recovered) {
+    restoreDraftCaret(recovered.caret);
+    // Let the recovery announcement finish before the user moves to another equation.
+    announcedEquation = equationAtCaret();
+    setDirty(true);
+    say(`Recovered ${docName}. Press Ctrl+S to save it as a notebook.`);
+  } else {
+    setDirty(false);
+    say(`Opened ${docName}.`);
+  }
   // A saved notebook can still contain waiting pictures. Pick up their descriptions from
   // the reader if they are available, using a new job owned by this open document.
   const sources = new Set([...doc.querySelectorAll('[data-figure]')]
@@ -440,18 +472,270 @@ function loadNotebook(text, path) {
   for (const id of sources) pollPictures({ id, documentRevision, name: docName });
 }
 
-async function save(as = false) {
+function save(as = false) {
+  // Repeated Ctrl+S and Save on close must wait for the same save dialog and write.
+  if (!saving) saving = saveNotebook(as).finally(() => { saving = null; });
+  return saving;
+}
+
+async function saveNotebook(as) {
+  if (studentView) {
+    say('Student preview. Use Teacher > Save student copy, or turn off preview to save the teacher notebook.');
+    return;
+  }
   if (!desktop) { say('Saving needs the desktop app.'); return; }
   const target = documentRevision;
   const content = serialize();
   const revision = editRevision;
-  const saved = await desktop.save({ path: as ? null : filePath, name: `${docName}.mathnb`, content });
+  let saved;
+  try {
+    saved = await desktop.save({ path: as ? null : filePath, name: `${docName}.mathnb`, content });
+  } catch {
+    say('Could not save the notebook. Your edits are still open. Try Save As to choose another location.');
+    return;
+  }
   if (!saved || target !== documentRevision) return;
   filePath = saved;
   docName = saved.split(/[\\/]/).pop().replace(/\.mathnb$/i, '');
   setDirty(editRevision !== revision);
+  if (!dirty) {
+    try { await clearDraft(); }
+    catch { say(`Saved ${docName}. The old recovery draft could not be removed.`); return; }
+  }
+  if (target !== documentRevision) return;
   say(dirty ? `Saved ${docName}. New changes still need to be saved.` : `Saved ${docName}.`);
 }
+
+// ---------- local recovery drafts ----------
+
+function clearDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  draftWaitingSince = 0;
+  draftWriteFailed = false;
+  return desktop?.clearDraft?.();
+}
+
+function queueDraft(delay = DRAFT_PAUSE) {
+  if (!desktop?.writeDraft || draftWriting) return; // a write in progress queues the next one
+  const now = Date.now();
+  if (!draftWaitingSince) draftWaitingSince = now;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(checkpointDraft, Math.min(delay, Math.max(0, draftWaitingSince + DRAFT_LONGEST_WAIT - now)));
+}
+
+async function checkpointDraft() {
+  draftTimer = null;
+  draftWaitingSince = 0;
+  if (!dirty) return;
+  draftWriting = true;
+  const revision = documentRevision;
+  const edit = editRevision;
+  try {
+    const snapshot = studentView ? studentView.recovery || { html: studentView.html } : draftHtml();
+    await desktop.writeDraft({ name: docName, content: serialize({ html: snapshot.html }), caret: snapshot.caret });
+    if (revision === documentRevision) draftWriteFailed = false;
+  } catch {
+    if (revision !== documentRevision || !dirty) return;
+    if (!draftWriteFailed) say('Could not save a recovery draft. Save this notebook manually.');
+    draftWriteFailed = true;
+  } finally {
+    draftWriting = false;
+    if (dirty && (draftWriteFailed || revision !== documentRevision || edit !== editRevision)) {
+      queueDraft(draftWriteFailed ? 5000 : undefined);
+    }
+  }
+}
+
+// A marker in the copy keeps the caret even when parsing the HTML joins adjacent text nodes.
+// Taking the snapshot never settles an equation or moves the caret in the live editor.
+function draftHtml() {
+  const copy = doc.cloneNode(true);
+  function counterpart(node) {
+    const indices = [];
+    for (; node !== doc; node = node.parentNode) {
+      indices.unshift([...node.parentNode.childNodes].indexOf(node));
+    }
+    return indices.reduce((parent, index) => parent.childNodes[index], copy);
+  }
+  const open = openText && doc.contains(openText.span) ? counterpart(openText.span) : null;
+  const selection = getSelection();
+  // While a dialog has the focus, the place the cursor last was in the document.
+  const inDoc = doc.contains(selection.focusNode);
+  const node = inDoc ? selection.focusNode : lastDocCaret?.startContainer;
+  const offset = inDoc ? selection.focusOffset : lastDocCaret?.startOffset;
+  // randomUUID exists only on secure pages (the app's own is one; a test or LAN address is not).
+  const id = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const marker = el('span', { class: `recovery-caret-${id}` });
+  if (node && doc.contains(node)) {
+    const equation = (node.nodeType === Node.TEXT_NODE ? node.parentElement : node).closest('.eq');
+    if (open && openText.span.contains(node)) open.after(marker);
+    else if (equation) counterpart(equation).after(marker);
+    else {
+      const range = document.createRange();
+      range.setStart(counterpart(node), Math.min(offset, node.nodeType === Node.TEXT_NODE ? node.length : node.childNodes.length));
+      range.collapse(true);
+      range.insertNode(marker);
+    }
+  }
+  if (open) {
+    const draft = equationTextResult(openText);
+    if (typeof draft.latex === 'string') open.replaceWith(mathSpan(draft.latex, openText.display));
+    else open.replaceWith(document.createTextNode(draft.text));
+  }
+  return { html: copy.innerHTML, caret: marker.parentNode ? marker.className : null };
+}
+
+function restoreDraftCaret(caret) {
+  const marker = caret && doc.querySelector(`.${CSS.escape(caret)}`);
+  if (!marker) { placeCaretIn(doc.firstChild || doc); return; }
+  const range = document.createRange();
+  range.setStartBefore(marker);
+  range.collapse(true);
+  marker.parentElement.scrollIntoView({ block: 'nearest' });
+  marker.remove();
+  getSelection().removeAllRanges();
+  getSelection().addRange(range);
+}
+
+// ---------- undo and redo ----------
+// Chromium's own undo knows only typing: after the app changed the document (an equation made,
+// a line copied down) Ctrl+Z did nothing, and Ctrl+Y could put old letters back in the wrong
+// place. So the document is kept whole before each change, with its caret and graphs. Typing
+// is one step until the cursor moves, a command runs or another kind of key is pressed.
+
+function undoState() {
+  const { html, caret } = draftHtml();
+  return { html, caret, graphs: new Map(graphs) };
+}
+
+// A new document (opened, imported, New): nothing to undo yet.
+function resetUndo() {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  typingStep = false;
+  undoBase = undoState();
+  undoRevision = documentRevision;
+}
+
+// Before the user changes anything: the document they start from.
+function readyUndo() {
+  if (undoRevision !== documentRevision || !undoBase) resetUndo();
+}
+
+function closeTypingStep() {
+  if (!typingStep) return;
+  typingStep = false;
+  undoBase = undoState();
+}
+
+// After every change (setDirty): what was there before becomes a step back.
+function keepUndoStep(typing) {
+  if (undoing || studentView) return;
+  if (undoRevision !== documentRevision || !undoBase) { resetUndo(); return; }
+  if (typing && typingStep) return;
+  undoStack.push(undoBase);
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+  if (typing) typingStep = true;
+  else { typingStep = false; undoBase = undoState(); }
+}
+
+function restoreUndo(from, to, word) {
+  if (document.activeElement !== doc && document.activeElement !== document.body) return;
+  readyUndo();
+  closeTypingStep();
+  if (!from.length) { say(`Nothing to ${word.toLowerCase()}.`); return; }
+  to.push(undoState());
+  const state = from.pop();
+  openText = null;
+  doc.innerHTML = state.html; // our own document, as it was: already clean
+  graphs.clear();
+  for (const [id, g] of state.graphs) graphs.set(id, g);
+  doc.focus();
+  restoreDraftCaret(state.caret);
+  undoBase = state;
+  undoing = true;
+  try { setDirty(true); } finally { undoing = false; }
+  const line = currentBlock();
+  say(`${word}. ${line ? spoken(line) || 'Blank line.' : ''}`);
+}
+const undo = () => restoreUndo(undoStack, redoStack, 'Undo');
+const redo = () => restoreUndo(redoStack, undoStack, 'Redo');
+
+const recoveryDialog = $('recovery-dialog');
+const recoveryList = $('recovery-list');
+let recoveryBusy = false;
+async function showRecovery(atStart = false) {
+  if (!desktop?.listDrafts || recoveryBusy || recoveryDialog.open) return;
+  if (dirty) {
+    if (!atStart) say('Save or close this notebook before recovering another draft.');
+    return;
+  }
+  const revision = documentRevision;
+  try {
+    const { drafts, unreadable } = await desktop.listDrafts();
+    if (revision !== documentRevision || dirty || document.querySelector('dialog[open]')) return;
+    if (!drafts.length) {
+      if (unreadable) say('A recovery draft could not be read. It was kept in the recovery folder.');
+      else if (!atStart) say('No unsaved notebooks to recover.');
+      return;
+    }
+    recoveryList.replaceChildren(...drafts.map(({ id, name, updated }) =>
+      el('option', { value: id }, `${name || 'Untitled'} — ${new Date(updated).toLocaleString()}`)));
+    recoveryList.selectedIndex = 0;
+    $('recovery-error').textContent = unreadable ? 'Some drafts could not be read and were kept in the recovery folder.' : '';
+    recoveryDialog.showModal();
+    recoveryList.focus();
+  } catch {
+    say('Could not read the recovery folder.');
+  }
+}
+
+recoveryList.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  recoveryDialog.querySelector('button[value="recover"]').click();
+});
+recoveryDialog.addEventListener('cancel', (event) => { if (recoveryBusy) event.preventDefault(); });
+recoveryDialog.addEventListener('close', () => doc.focus());
+recoveryDialog.querySelector('form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (recoveryBusy) return;
+  const action = event.submitter?.value;
+  if (!action) return;
+  if (action === 'later') { recoveryDialog.close(); return; }
+  const selected = recoveryList.selectedOptions[0];
+  if (!selected) return;
+  if (action === 'discard' && !confirm(`Discard the recovery draft for ${selected.textContent}?`)) return;
+  recoveryBusy = true;
+  for (const control of event.target.elements) control.disabled = true;
+  try {
+    if (action === 'recover') {
+      const draft = await desktop.takeDraft(selected.value);
+      recoveryDialog.close();
+      loadNotebook(draft.content, null, draft);
+    } else {
+      await desktop.discardDraft(selected.value);
+      selected.remove();
+      if (!recoveryList.length) {
+        recoveryDialog.close();
+        say('Recovery draft discarded.');
+      } else {
+        recoveryList.selectedIndex = 0;
+        $('recovery-error').textContent = 'Recovery draft discarded.';
+      }
+    }
+  } catch {
+    const message = 'Could not use this recovery draft. Try opening the recovery list again.';
+    if (recoveryDialog.open) $('recovery-error').textContent = message;
+    else say(message);
+  } finally {
+    recoveryBusy = false;
+    for (const control of event.target.elements) control.disabled = false;
+    if (recoveryDialog.open) recoveryList.focus();
+  }
+});
 
 function exportHtml() {
   settleEquationText();
@@ -738,13 +1022,22 @@ function placeCaretIn(block) {
 let equationTarget = null;
 let equationRange = null;
 let latexMode = false;
+let equationOriginal = null;
+let equationPlain = null;
 
 // The equation as plain text, or null when plain text cannot hold it (a piecewise function from
 // a PDF or .tex file): then it is edited as LaTeX, so pressing Enter cannot break it.
 const NO_PLAIN = 'Plain text cannot write all of this equation, so it is shown as LaTeX.';
 function plainFor(latex) {
-  const plain = latexToPlain(latex);
-  try { plainToLatex(splitComment(plain).code); return plain; } catch { return null; }
+  try {
+    const plain = latexToPlain(latex);
+    const rebuilt = plainToLatex(splitComment(plain).code);
+    if (!plain || !rebuilt) return null;
+    // Check the rendered structure rather than whether the lossy transcription merely parses.
+    const structure = (source) => latexToMathml(source).replace(/<annotation\b[^>]*>[\s\S]*?<\/annotation>/g, '')
+      .replace(/<mspace\b[^>]*\/>|<mspace\b[^>]*><\/mspace>/g, '');
+    return structure(latex) === structure(rebuilt) ? plain : null;
+  } catch { return null; }
 }
 
 function openEquation(target) {
@@ -752,9 +1045,10 @@ function openEquation(target) {
   const sel = getSelection();
   equationRange = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
   const input = $('equation-text');
-  const plain = target ? plainFor(target.dataset.latex) : '';
-  latexMode = plain === null;
-  input.value = latexMode ? target.dataset.latex : plain;
+  equationOriginal = target?.dataset.latex ?? null;
+  equationPlain = target ? plainFor(equationOriginal) : '';
+  latexMode = equationPlain === null;
+  input.value = latexMode ? equationOriginal : equationPlain;
   $('equation-label').textContent = latexMode ? 'Equation as LaTeX' : 'Equation as plain text';
   $('equation-error').textContent = '';
   preview();
@@ -765,7 +1059,10 @@ function openEquation(target) {
 
 // The typed maths without its comment (# or // to the end), which goes beside the equation.
 function currentLatex() {
-  const { code } = splitComment($('equation-text').value);
+  const input = $('equation-text').value;
+  if (input === equationOriginal) return equationOriginal;
+  const { code } = splitComment(input);
+  if (!latexMode && equationOriginal !== null && code.trim() === equationPlain) return equationOriginal;
   return latexMode ? code : plainToLatex(code);
 }
 
@@ -842,9 +1139,20 @@ function toggleLatex() {
 function commitEquation() {
   let latex;
   try { latex = currentLatex(); } catch (error) { $('equation-error').textContent = error.message; return; }
-  const { comment } = splitComment($('equation-text').value);
+  const input = $('equation-text').value;
+  const comment = input === equationOriginal ? '' : splitComment(input).comment;
+  if (latex && latex !== equationOriginal) {
+    try { latexToMathml(latex); } catch (error) { $('equation-error').textContent = error.message; return; }
+  }
   $('equation-dialog').close();
   if (!latex) { doc.focus(); return; }
+  if (equationTarget && latex === equationOriginal) {
+    if (comment) { addComment(equationTarget, comment); setDirty(true); }
+    doc.focus();
+    placeCaretAfter(equationTarget);
+    say(`Equation: ${latexToPlain(latex)}`);
+    return;
+  }
   const span = mathSpan(latex, equationTarget?.dataset.display === 'true');
   if (equationTarget) {
     equationTarget.replaceWith(span);
@@ -866,6 +1174,11 @@ function commitEquation() {
   say(`Equation: ${latexToPlain(latex)}${comment ? `. Comment: ${comment}` : ''}`);
 }
 
+$('equation-form').addEventListener('submit', (e) => {
+  if (e.submitter?.value === 'cancel') return;
+  e.preventDefault();
+  commitEquation();
+});
 $('equation-text').addEventListener('input', preview);
 $('equation-text').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); commitEquation(); }
@@ -947,6 +1260,11 @@ function graphEquation(eq) {
   setDirty(true);
   exploreGraph(line);
 }
+$('graph-form').addEventListener('submit', (e) => {
+  if (e.submitter?.value === 'cancel') return;
+  e.preventDefault();
+  commitGraph();
+});
 $('graph-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); commitGraph(); } });
 $('graph-range').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitGraph(); } });
 
@@ -961,7 +1279,7 @@ const graphMode = new GraphMode({
 
 function exploreGraph(block = currentBlock()) {
   // On an equation (not on a graph line): graph that equation.
-  const eq = !block?.classList.contains('graph-line') && equationAtCaret();
+  const eq = !studentView && !block?.classList.contains('graph-line') && equationAtCaret();
   if (eq) { graphEquation(eq); return; }
   let target = block?.classList.contains('graph-line') ? block : null;
   if (!target && block) {
@@ -1400,7 +1718,19 @@ function equationNextTo(forward) {
 
 function stepIntoEquation(eq, atEnd) {
   const latex = eq.dataset.latex;
-  const plain = latexToPlain(latex);
+  const plain = plainFor(latex);
+  if (plain === null) {
+    if (atEnd) {
+      const range = document.createRange();
+      range.setStartBefore(eq);
+      range.collapse(true);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } else placeCaretAfter(eq);
+    say('Press Ctrl+E to edit this equation in LaTeX.');
+    return;
+  }
   const span = el('span', { class: 'eq-text' }, plain);
   eq.replaceWith(span);
   openText = { span, latex, plain, display: eq.dataset.display === 'true' };
@@ -1411,26 +1741,29 @@ function stepIntoEquation(eq, atEnd) {
   getSelection().addRange(r);
 }
 
+function equationTextResult(open) {
+  const text = open.span.textContent;
+  if (text.trim() === open.plain.trim()) return { latex: open.latex, changed: false };
+  if (!text.trim()) return { text: '', changed: true };
+  try { return { latex: typedToLatex(splitComment(text).code), changed: true }; }
+  catch (error) { return { text, error, changed: true }; }
+}
+
 // Back to an equation. Returns it (null if it was emptied or is not maths yet).
 function closeEquationText() {
   const open = openText;
   openText = null;
   if (!open || !doc.contains(open.span)) return null;
-  const { span } = open;
-  const text = span.textContent;
-  let latex = open.latex;
-  if (text.trim() !== open.plain.trim()) {
-    if (!text.trim()) { span.remove(); setDirty(true); return null; }
-    try { latex = typedToLatex(splitComment(text).code); } catch (error) {
-      span.replaceWith(document.createTextNode(text));
-      setDirty(true);
-      say(`This is text now, not an equation: ${error.message} Ctrl+Shift+E makes it an equation again.`);
-      return null;
-    }
-    setDirty(true);
+  const result = equationTextResult(open);
+  if (result.changed) setDirty(true);
+  if (typeof result.latex !== 'string') {
+    if (result.text) open.span.replaceWith(document.createTextNode(result.text));
+    else open.span.remove();
+    if (result.error) say(`This is text now, not an equation: ${result.error.message} Ctrl+Shift+E makes it an equation again.`);
+    return null;
   }
-  const eq = mathSpan(latex, open.display);
-  span.replaceWith(eq);
+  const eq = mathSpan(result.latex, open.display);
+  open.span.replaceWith(eq);
   return eq;
 }
 
@@ -1463,6 +1796,16 @@ function equationBefore(block) {
 // line is empty, otherwise on a new line below it.
 function copyEquationDown() {
   const block = currentBlock();
+  // The line just written is still text, because it could not be made an equation: copying an
+  // older equation from further up instead would be a surprise, so say what is wrong with it.
+  let near = block;
+  while (isBlankLine(near)) near = near.previousElementSibling;
+  const written = near && !near.querySelector('.eq') && !near.classList.contains('graph-line') ? splitComment(near.textContent).code.trim() : '';
+  if (written.includes('=')) {
+    let problem = null;
+    try { typedToLatex(written); } catch (error) { problem = error.message; }
+    if (problem) { say(`This line is text, not an equation yet: ${problem} Ctrl+Shift+E makes it one.`); return; }
+  }
   const source = equationBefore(block);
   if (!source) { say('There is no equation above to copy.'); return; }
   const line = equationLine(source.dataset.latex);
@@ -1965,11 +2308,11 @@ function findAgain(direction, fromDialog = false) {
   return match;
 }
 
-function replaceRange(range, text) {
+function replaceRange(range, text, changed = true) {
   range.deleteContents();
   if (text) range.insertNode(document.createTextNode(text));
   range.startContainer.parentElement?.normalize();
-  setDirty(true);
+  if (changed) setDirty(true);
 }
 
 function replaceOne() {
@@ -1993,7 +2336,8 @@ function replaceAll() {
   if (!findState.text) { $('find-message').textContent = 'Type what to find first.'; return; }
   const matches = findMatches();
   // From the end backwards, so the places of earlier matches do not move.
-  for (const range of matches.reverse()) replaceRange(range, $('replace-text').value);
+  for (const range of matches.reverse()) replaceRange(range, $('replace-text').value, false);
+  if (matches.length) setDirty(true); // one step for Ctrl+Z, not one per match
   $('find-message').textContent = matches.length ? `Replaced ${matches.length} ${matches.length === 1 ? 'match' : 'matches'}.` : `"${findState.text}" was not found.`;
 }
 
@@ -2164,7 +2508,17 @@ function openStudentGraph() {
 // The equations in root that are a graph's own formula: the same maths, however it is spaced
 // and whatever it is called (f(x) = x^2 - 2 in the problem, y = x^2 - 2 graphed).
 function formulaEquations(graph, root = doc) {
-  const same = (latex) => latexToPlain(latex).replace(/\s+/g, '').replace(/^[A-Za-z]('*)(\([A-Za-z]\))?=/, '');
+  const same = (latex) => {
+    const plain = latexToPlain(latex);
+    const main = (splitDomain(plain)?.main || plain).replace(/\s+/g, '');
+    const sides = main.split('=');
+    const isName = (s) => s !== 'x' && /^[A-Za-z](?:_\(?[A-Za-z0-9]+\)?)?'*(?:\([A-Za-z]\))?$/.test(s);
+    if (sides.length === 2) {
+      if (isName(sides[0])) return sides[1];
+      if (isName(sides[1])) return sides[0];
+    }
+    return main;
+  };
   const formulas = new Set([...(graph.functions || []).map((f) => f.latex), ...(graph.equations || []).map((e) => e.text ?? e)]
     .filter(Boolean).map(same));
   return [...root.querySelectorAll('.eq')].filter((eq) => formulas.has(same(eq.dataset.latex)));
@@ -2216,8 +2570,9 @@ function studentCopy() {
     // A graph whose formula is hidden: the equation it was made from (Ctrl+G on y = x^2 - 2)
     // would give the answer away, so it is blanked too, with its comment.
     for (const eq of graph.student?.hideFormula ? formulaEquations(graph, root) : []) {
-      const comment = eq.closest('.eq-line')?.querySelector('.comment');
-      if (comment) comment.remove();
+      let comment = eq.nextSibling;
+      while (comment?.nodeType === Node.TEXT_NODE && !comment.textContent.trim()) comment = comment.nextSibling;
+      if (comment?.classList?.contains('comment')) comment.remove();
       eq.replaceWith(document.createTextNode('______'));
     }
     const id = newId();
@@ -2235,7 +2590,7 @@ function togglePreview(force, quiet = false) {
   if (on === Boolean(studentView)) return;
   if (on) {
     const copy = studentCopy();
-    studentView = { html: doc.innerHTML, graphs: new Map(graphs) };
+    studentView = { html: doc.innerHTML, graphs: new Map(graphs), recovery: dirty && desktop?.writeDraft ? draftHtml() : null };
     for (const [id, g] of copy.graphs) graphs.set(id, g);
     doc.replaceChildren(...copy.root.childNodes);
     doc.contentEditable = 'false';
@@ -2356,10 +2711,14 @@ function updateToolbar() {
 document.addEventListener('selectionchange', updateToolbar);
 
 // The mode in the window title (NVDA+T reads it) and in the corner of the screen.
+// Called on every key typed: only a real change is passed on, since each new window title is a
+// message to Windows that NVDA reacts to.
 function showMode() {
   const mode = studentView ? 'Student preview' : teacherMode ? 'Teacher mode' : '';
-  $('mode-indicator').textContent = mode;
+  const indicator = $('mode-indicator');
+  if (indicator.textContent !== mode) indicator.textContent = mode;
   const title = `${dirty ? '* ' : ''}${docName}${mode ? ` (${mode})` : ''} - Math Notebook`;
+  if (document.title === title) return;
   desktop?.setTitle(title);
   document.title = title;
 }
@@ -2413,7 +2772,7 @@ async function showKeys(section = null) {
   };
   const extra = [
     ['Most used', [['All keys (this page)', 'F1'], ['The menus', 'Alt'], ['Between the toolbar and the document', 'F6'],
-      ['Save', 'Ctrl+S'], ['Export as a Word document', 'Ctrl+Shift+W'], ['Import a PDF', 'Ctrl+Shift+I'],
+      ['Save', 'Ctrl+S'], ['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Y or Ctrl+Shift+Z'], ['Export as a Word document', 'Ctrl+Shift+W'], ['Import a PDF', 'Ctrl+Shift+I'],
       ['Read the line with its maths spelled out', 'Ctrl+Shift+R'], ['Find', 'Ctrl+F'], ['Headings list', 'Ctrl+Shift+H']]],
     ['Equations', [['Make the line (or selection) an equation', 'Ctrl+Shift+E'], ['Insert an equation', 'Alt+='],
       ['Edit the equation', 'Ctrl+E, or Enter before it'], ['New line after an equation', 'Enter after it'],
@@ -2476,6 +2835,9 @@ function wordCount() {
 
 let convertRange = null;
 let convertLatex = '';
+// Opened on an equation, "It is written in" is set to LaTeX for it. Once something else is
+// typed it finds out again: plain text read as LaTeX came out unchanged, without backslashes.
+let convertFromSet = false;
 
 export function detectFormat(text) {
   const s = text.trim();
@@ -2520,6 +2882,7 @@ function openConvert() {
   convertRange = sel.rangeCount && doc.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
   const eq = equationAtCaret();
   const selected = sel.toString().trim();
+  convertFromSet = Boolean(eq);
   if (eq) { $('convert-input').value = eq.dataset.latex; $('convert-from').value = 'latex'; }
   else if (selected && doc.contains(sel.anchorNode)) { $('convert-input').value = selected; $('convert-from').value = 'auto'; }
   runConvert();
@@ -2540,6 +2903,7 @@ async function copyConverted() {
 }
 
 function insertConverted() {
+  if (studentView) { $('convert-error').textContent = 'Turn off student preview to insert an equation.'; return; }
   if (!convertLatex) { $('convert-error').textContent = 'There is no equation to insert yet.'; return; }
   $('convert-dialog').close('insert');
   doc.focus();
@@ -2558,8 +2922,11 @@ function insertConverted() {
   say(`Equation inserted: ${latexToPlain(convertLatex)}`);
 }
 
-$('convert-input').addEventListener('input', runConvert);
-$('convert-from').addEventListener('change', runConvert);
+$('convert-input').addEventListener('input', () => {
+  if (convertFromSet) { convertFromSet = false; $('convert-from').value = 'auto'; }
+  runConvert();
+});
+$('convert-from').addEventListener('change', () => { convertFromSet = false; runConvert(); });
 $('convert-to').addEventListener('change', runConvert);
 // Copy result is the default button: Enter in the choices copies instead of closing.
 $('convert-form').addEventListener('submit', (e) => {
@@ -2569,13 +2936,21 @@ $('convert-form').addEventListener('submit', (e) => {
 });
 $('convert-insert').addEventListener('click', insertConverted);
 $('convert-dialog').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); copyConverted(); } });
-$('convert-dialog').addEventListener('close', () => { if ($('convert-dialog').returnValue !== 'insert') doc.focus(); $('convert-dialog').returnValue = ''; });
+$('convert-dialog').addEventListener('close', () => {
+  if ($('convert-dialog').returnValue !== 'insert') {
+    doc.focus();
+    // Back where the cursor was, not at the top of the document.
+    if (convertRange && doc.contains(convertRange.startContainer)) { getSelection().removeAllRanges(); getSelection().addRange(convertRange); }
+  }
+  $('convert-dialog').returnValue = '';
+});
 
 // ---------- pasting ----------
 
 // Pasted web pages and documents keep their headings, lists, tables, bold and italic, and
 // their MathML becomes real equations; their styles, scripts and pictures are left out.
 doc.addEventListener('paste', (e) => {
+  if (studentView) { e.preventDefault(); return; }
   const html = e.clipboardData?.getData('text/html');
   if (!html) return; // plain text pastes as plain text
   e.preventDefault();
@@ -2711,6 +3086,7 @@ $('settings-defaults').addEventListener('click', () => resetSettings(true));
 // Hearing a sound before choosing it: a few notes as you move through the list, a whole example with Listen.
 $('set-sound_profile').addEventListener('change', () => graphMode.preview(settingsFromForm(), true));
 $('sound-listen').addEventListener('click', () => say(graphMode.preview(settingsFromForm())));
+$('set-stereo_width').addEventListener('change', () => graphMode.previewStereo(settingsFromForm()));
 $('settings-dialog').addEventListener('close', () => { (settingsReturn && document.contains(settingsReturn) ? settingsReturn : doc).focus(); });
 
 // ---------- the sound guide (Help > Sound guide, or Settings > Graph sound) ----------
@@ -2797,6 +3173,7 @@ $('sound-guide-open').addEventListener('click', () => openSoundGuide(settingsFro
 // after the graph (as typing after a table in Word); its words cannot be changed one by one,
 // and the whole line selected and deleted removes the graph.
 doc.addEventListener('beforeinput', (e) => {
+  if (studentView) { e.preventDefault(); return; }
   const sel = getSelection();
   if (!sel.rangeCount) return;
   const range = sel.getRangeAt(0);
@@ -2839,8 +3216,26 @@ doc.addEventListener('beforeinput', (e) => {
   else say(`The line ${back ? 'above' : 'below'} is a graph; it stays as it is.`);
 });
 
+// Letters (AltGr ones too, which come as Ctrl+Alt), Backspace and Delete are typing; any other
+// key ends the typing step, so Ctrl+Z takes back what was typed since the cursor last moved.
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'Dead', 'Process', 'Unidentified']);
+doc.addEventListener('keydown', (e) => {
+  readyUndo();
+  const letter = e.key.length === 1 && e.ctrlKey === e.altKey && !e.metaKey;
+  if (!letter && !MODIFIER_KEYS.has(e.key) && !(['Backspace', 'Delete'].includes(e.key) && !e.ctrlKey)) closeTypingStep();
+}, true);
+doc.addEventListener('mousedown', () => { readyUndo(); closeTypingStep(); });
+
 doc.addEventListener('keydown', (e) => {
   const plainKey = !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey;
+  if (studentView) {
+    const block = currentBlock();
+    if (e.key === 'Enter' && plainKey && block?.classList.contains('graph-line')) {
+      e.preventDefault();
+      exploreGraph(block);
+    }
+    return;
+  }
   // Down arrow on the last line, a graph: a new line after it, as Word does after a table.
   if (e.key === 'ArrowDown' && plainKey && currentBlock()?.classList.contains('graph-line') && !currentBlock().nextElementSibling) {
     e.preventDefault();
@@ -2949,7 +3344,8 @@ function freshLine(block) {
   block.classList.remove('warned', 'waiting', 'figure-line');
 }
 doc.addEventListener('input', (e) => {
-  setDirty(true);
+  // A paste or a drop is a step of its own; typed letters join the typing step.
+  setDirty(true, !/Paste|Drop|Replacement|history/.test(e.inputType));
   if (e.inputType === 'insertParagraph') {
     const block = currentBlock();
     freshLine(block);
@@ -2961,7 +3357,7 @@ doc.addEventListener('input', (e) => {
 });
 doc.addEventListener('click', (e) => {
   const eq = e.target.closest?.('.eq');
-  if (eq) openEquation(eq);
+  if (eq && !studentView) openEquation(eq);
   const graph = e.target.closest?.('.graph-line');
   if (graph && e.detail === 2) exploreGraph(graph);
 });
@@ -2991,6 +3387,7 @@ const COMMANDS = {
   },
   save: () => save(false),
   saveAs: () => save(true),
+  recover: () => showRecovery(),
   exportHtml,
   exportDocx,
   exportPdf,
@@ -3029,6 +3426,8 @@ const COMMANDS = {
   graphNextFunction: () => graphCommand('function'),
   graphClose: () => graphCommand('close'),
   copyEquationDown,
+  undo,
+  redo,
   interval: openInterval,
   spelling: startSpelling,
   nextMisspelling,
@@ -3076,7 +3475,7 @@ const DOCUMENT_KEYS = {
   'Ctrl+Alt+0': 'normalText', 'Ctrl+Shift+E': 'toEquation', 'Ctrl+E': 'editEquation', 'Alt+=': 'insertEquation', 'Ctrl+F': 'find',
   'Ctrl+H': 'replace', F3: 'findNext', 'Shift+F3': 'findPrevious', 'Ctrl+Shift+M': 'convertMath', 'Ctrl+Shift+W': 'exportDocx',
   F1: 'keys', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'insertGraph', 'Ctrl+F9': 'hideWords', 'Ctrl+Shift+F9': 'hideLine', 'Ctrl+Shift+V': 'pastePlain', F11: 'copyEquationDown', 'Ctrl+T': 'toPlainText', 'Ctrl+Shift+T': 'toPlainText', 'Ctrl+L': 'toLatexText', 'Ctrl+PageDown': 'nextHeading', 'Ctrl+PageUp': 'previousHeading', 'Ctrl+Shift+H': 'headingList',
-  'Ctrl+Shift+D': 'interval', F7: 'spelling', 'Alt+F7': 'nextMisspelling',
+  'Ctrl+Shift+D': 'interval', F7: 'spelling', 'Alt+F7': 'nextMisspelling', 'Ctrl+Z': 'undo', 'Ctrl+Y': 'redo', 'Ctrl+Shift+Z': 'redo',
 };
 
 // Without the desktop menu bar (tests in a plain browser), the menu's other shortcuts work here too.
@@ -3091,7 +3490,7 @@ const FALLBACK_KEYS = {
 
 function run(name) {
   const command = COMMANDS[name];
-  if (command && !document.querySelector('dialog[open]')) settleEquationText();
+  if (command && !document.querySelector('dialog[open]')) { readyUndo(); closeTypingStep(); settleEquationText(); }
   // While a dialog is open its own keys win: Ctrl+Enter there is the dialog's, not a page
   // break, and Ctrl+B in the Find box must not make the document bold.
   if (command && document.querySelector('dialog[open]') && name !== 'keys') return;
@@ -3104,6 +3503,7 @@ desktop?.onCommand(run);
 window.serializeNotebook = serialize; // used by tests
 window.isDirty = () => dirty; // asked by the desktop window before it closes
 window.saveForClose = async () => { await save(false); return !dirty; };
+window.discardForClose = async () => { await clearDraft(); setDirty(false); };
 
 // Start with an empty page ready for typing.
 loadSettings().catch(() => {}); // graph sounds follow the saved settings
@@ -3116,6 +3516,10 @@ document.addEventListener('selectionchange', () => {
   const sel = getSelection();
   // The cursor has left the equation it was stepping through: it is an equation again.
   if (openText && sel.rangeCount && !openText.span.contains(sel.anchorNode) && document.activeElement === doc) closeEquationText();
+  if (sel.rangeCount && doc.contains(sel.focusNode)) {
+    lastDocCaret = document.createRange();
+    lastDocCaret.setStart(sel.focusNode, sel.focusOffset);
+  }
   if (!sel.rangeCount || !sel.isCollapsed) return;
   // Only while typing in the document: moving the selection would also move the keyboard
   // focus back into it, away from graph mode or a dialog.
@@ -3157,3 +3561,4 @@ setDirty(false);
 doc.focus();
 placeCaretIn(first); // typing goes into the first paragraph, not loose in the document
 say('Math Notebook. Alt opens the menus; F1 lists the keys.');
+showRecovery(true);

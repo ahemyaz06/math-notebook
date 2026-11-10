@@ -287,6 +287,17 @@ def read_vector_graph(page, bbox):
     left, upper, right, lower = _bounds(frame) if frame else box
     left, upper, right, lower = left - .05, upper - .05, right + .05, lower + .05
 
+    # An arrowhead under a dot is hidden: the dot marks where the curve ends (a homework
+    # graph drew f with arrows, then solid dots over both ends).
+    def under_dot(apts):
+        for _, dpts in dots:
+            dx0, dy0, dx1, dy1 = _bounds(dpts)
+            centre, reach = ((dx0 + dx1) / 2, (dy0 + dy1) / 2), max(dx1 - dx0, dy1 - dy0) / 2 + 1.5
+            if all(math.dist(q, centre) <= reach for q in apts):
+                return True
+        return False
+    arrows = [(color, apts) for color, apts in arrows if not under_dot(apts)]
+
     curves = []
     groups = {}
     for s in strokes:
@@ -332,10 +343,15 @@ def read_vector_graph(page, bbox):
                 curves.append(curve)
 
     # Labels such as f(x) go to the curve of the same colour, else to the nearest curve.
-    coloured_first = sorted(words, key=lambda w: color_name(w.get('non_stroking_color')) == 'black')
+    # Three or more bare letters are names of points (a to f marked along the x-axis in
+    # homework 4.1, problem 3, which said "c (blue)"), not of curves.
+    def framed(w):
+        return left <= (w['x0'] + w['x1']) / 2 <= right and upper <= (w['top'] + w['bottom']) / 2 <= lower
+    names = [w for w in words if FUNCTION_LABEL.match(w['text']) and w['text'] not in ('x', 'y')]
+    if sum(len(w['text']) == 1 for w in names if framed(w)) >= 3:
+        names = [w for w in names if len(w['text']) > 1]
+    coloured_first = sorted(names, key=lambda w: color_name(w.get('non_stroking_color')) == 'black')
     for w in coloured_first:
-        if not FUNCTION_LABEL.match(w['text']) or w['text'] in ('x', 'y'):
-            continue
         centre = ((w['x0'] + w['x1']) / 2, (w['top'] + w['bottom']) / 2)
         colour = color_name(w.get('non_stroking_color'))
         pool = [c for c in curves if c['label'] is None and (c['color'] == colour or colour == 'black')]
@@ -345,6 +361,11 @@ def read_vector_graph(page, bbox):
         # A black word only labels a curve it sits next to; it may be question text.
         if colour == nearest['color'] or min(math.dist(centre, p) for p in nearest['pixels']) < 25:
             nearest['label'] = w['text']
+    # One curve and one name inside the grid: the name is the curve's, however far from it
+    # it is printed (the f(x) in a corner of the graph).
+    inside = [w for w in names if framed(w)]
+    if len(curves) == 1 and curves[0]['label'] is None and len(inside) == 1:
+        curves[0]['label'] = inside[0]['text']
 
     points = []
     for obj, pts in dots:

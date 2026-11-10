@@ -77,6 +77,10 @@
     <input id="equation-text" autocomplete="off" spellcheck="false">
     <p id="equation-error" class="error" role="alert"></p>
     <div id="equation-preview" class="math-display" aria-hidden="true"></div>
+    <div class="buttons">
+      <button value="apply">Apply equation</button>
+      <button value="cancel">Cancel</button>
+    </div>
     <template class="dialog-help"><p>Type the equation as plain text, for example (x^2 - 4)/(x - 2) or sqrt(x+1), or as LaTeX.</p>
       <p>An interval after the maths limits where it applies and where it is graphed: y = sin x, [0, 2pi], or y = sin x on (0, pi], or y = x^2 for 0 &lt; x &lt; 1.
         A comment after # or // stays as words beside the equation and is never part of the maths: y = x^2 # the parabola.</p>
@@ -136,6 +140,10 @@
     <label for="graph-yrange">y from and to</label>
     <input id="graph-yrange" autocomplete="off">
     <p id="graph-error" class="error" role="alert"></p>
+    <div class="buttons">
+      <button value="insert">Insert graph</button>
+      <button value="cancel">Cancel</button>
+    </div>
     <template class="dialog-help"><p>Write each function of x on its own line, in plain text or LaTeX, for example x^2 - 4 or \frac{1}{x}.
         A piecewise function is written as \begin{cases} ... \end{cases}. pgfplots code from a .tex file works too.</p>
       <p>A function can have its own interval: sin x, [0, 2pi], or tan x on (-pi/2, pi/2). Anything after # or // on a line is a comment and is not graphed.</p>
@@ -330,9 +338,21 @@
         </optgroup>
       </select>
       <button type="button" id="sound-listen">Listen</button>
-      <label><input type="checkbox" id="set-slope_sound" name="slope_sound"> Slope sound in graph mode: a soft second note for the slope after each step (D turns it on or off)</label>
       <button type="button" id="sound-guide-open">Sound guide…</button>
       <label><input type="checkbox" id="set-pitch_glide" name="pitch_glide"> Clearer pitch: notes slide from the last height and are a little further apart (off: the original sound)</label>
+      <label><input type="checkbox" id="set-slope_sound" name="slope_sound"> Slope sound in graph mode: a soft second note for the slope after each step (D turns it on or off)</label>
+      <label for="set-stereo_width">Stereo: where left and right are</label>
+      <select id="set-stereo_width" name="stereo_width">
+        <option value="original">Original: the graph's edges almost fully left and right</option>
+        <option value="wider">Wider: points spread further from the middle; bigger graphs reach further, up to 10; the bass line moves too</option>
+      </select>
+      <label for="set-volume">Step volume</label>
+      <select id="set-volume" name="volume" data-number>
+        <option value="0.1">Quiet</option>
+        <option value="0.25">Medium</option>
+        <option value="0.4">Loud</option>
+        <option value="0.5">Loudest</option>
+      </select>
       <label for="set-bass_mode">Bass line while playing</label>
       <select id="set-bass_mode" name="bass_mode">
         <option value="x-and-y">Follows x and the curve's height</option>
@@ -340,11 +360,20 @@
         <option value="y-only">Follows the curve's height only</option>
         <option value="off">Off</option>
       </select>
+      <label for="set-bass_volume">Bass line volume</label>
+      <select id="set-bass_volume" name="bass_volume" data-number>
+        <option value="0.2">Quiet</option>
+        <option value="0.35">Medium</option>
+        <option value="0.6">Loud</option>
+        <option value="0.9">Loudest</option>
+      </select>
       <label for="set-dot_sounds">Dots and corners</label>
       <select id="set-dot_sounds" name="dot_sounds">
         <option value="new">Bump for a solid dot, wind for an open dot, a slide through a corner</option>
         <option value="original">Original: held tone and air breath, no corner sound</option>
       </select>
+      <label><input type="checkbox" id="set-cues" name="cues"> Sounds for peaks, zeros and other points of interest</label>
+      <label><input type="checkbox" id="set-free_move_tones" name="free_move_tones"> Tones when the arrow keys land on a curve, a dot or the origin</label>
       <label for="set-graph_numbers">Numbers you hear</label>
       <select id="set-graph_numbers" name="graph_numbers">
         <option value="half">Rounded to the nearest half: 4.19 is 4, 0.89 is 1</option>
@@ -365,22 +394,6 @@
         <option value="250">Smooth: 0.25 seconds a step</option>
         <option value="150">Fast: 0.15 seconds a step</option>
       </select>
-      <label><input type="checkbox" id="set-cues" name="cues"> Sounds for peaks, zeros and other points of interest</label>
-      <label><input type="checkbox" id="set-free_move_tones" name="free_move_tones"> Tones when the arrow keys land on a curve, a dot or the origin</label>
-      <label for="set-volume">Step volume</label>
-      <select id="set-volume" name="volume" data-number>
-        <option value="0.1">Quiet</option>
-        <option value="0.25">Medium</option>
-        <option value="0.4">Loud</option>
-        <option value="0.5">Loudest</option>
-      </select>
-      <label for="set-bass_volume">Bass line volume</label>
-      <select id="set-bass_volume" name="bass_volume" data-number>
-        <option value="0.2">Quiet</option>
-        <option value="0.35">Medium</option>
-        <option value="0.6">Loud</option>
-        <option value="0.9">Loudest</option>
-      </select>
     </fieldset>
     <p id="settings-error" class="error" role="alert"></p>
     <div class="buttons">
@@ -390,7 +403,7 @@
     </div>
     <template class="dialog-help"><p>PDFs made with LaTeX (most course notes and homework) are read from their own text, by rules: every equation exactly as printed.
       The AI add-on, when installed, is only for pictures and for pages whose maths is not stored as text.</p>
-      <p>Graph sound: the sound (calm sounds, instruments, beeps or game sounds), the bass line while playing, the step, the speed, the sounds for points of interest and the volumes.
+      <p>Graph sound, in this order: the sound and how it is heard (the sound, clearer pitch, the slope sound, stereo, the volumes and the bass line), then dots and points of interest, then moving (numbers you hear, the step and the speed).
       Moving through the sounds plays a few notes of each; Listen plays a whole example: up, down, back to zero, then a solid dot and an open dot.
       Every sound uses the same pitch for the same height; only its colour changes.
       Numbers you hear are rounded to the nearest half unless you choose otherwise.</p></template>
@@ -413,6 +426,21 @@
   <div id="help-text"></div>
   <form method="dialog">
     <div class="buttons"><button value="close" id="help-close">Close</button></div>
+  </form>
+</dialog>
+
+<dialog id="recovery-dialog" aria-labelledby="recovery-title" aria-describedby="recovery-description">
+  <h2 id="recovery-title">Recover unsaved work</h2>
+  <p id="recovery-description">Choose a draft. Recovered work opens as an unsaved notebook. Save it to a file with Ctrl+S.</p>
+  <form>
+    <label for="recovery-list">Recovery drafts</label>
+    <select id="recovery-list" size="5"></select>
+    <p id="recovery-error" class="error" role="alert"></p>
+    <div class="buttons">
+      <button value="recover">Recover selected draft</button>
+      <button value="later">Keep for later</button>
+      <button value="discard">Discard selected draft</button>
+    </div>
   </form>
 </dialog>
 

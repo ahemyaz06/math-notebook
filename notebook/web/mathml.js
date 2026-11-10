@@ -383,9 +383,21 @@ function rowOmml(nodes, display) {
     if (opInfo) {
       let j = i + 1;
       const body = [];
+      const integral = isIntegral(opInfo.op);
+      let differentials = integral ? 1 : 0;
       while (j < nodes.length && !isRelation(nodes[j])) {
-        if (body.length && /^[+−-]$/.test(textOf(nodes[j]).trim()) && nodes[j].name === 'mo' && !isIntegral(opInfo.op)) break;
+        if (body.length && /^[+−-]$/.test(textOf(nodes[j]).trim()) && nodes[j].name === 'mo' && !integral) break;
+        const inner = integral && largeOperator(nodes[j]);
+        if (inner && isIntegral(inner.op)) differentials += 1;
+        const marker = nodes[j].name === 'mrow' ? content(nodes[j]).filter((node) => !isSpace(node)) : [nodes[j]];
+        const variable = nodes[j + 1];
         body.push(nodes[j]); j += 1;
+        if (integral && marker.length === 1 && marker[0].name === 'mi' && textOf(marker[0]) === 'd' &&
+            variable?.name === 'mi' && /^\p{L}$/u.test(textOf(variable)) &&
+            (!nodes[j + 1] || isSpace(nodes[j + 1]) || nodes[j + 1].name === 'mo')) {
+          body.push(variable); j += 1;
+          if (--differentials === 0) break;
+        }
       }
       out += naryOmml(opInfo.op, opInfo.sub, opInfo.sup, rowOmml(body, display), display);
       i = j - 1;

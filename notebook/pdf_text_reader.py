@@ -18,7 +18,8 @@ import math
 import re
 import statistics
 
-VERSION = 10  # 10: a small letter on the line after a word is no subscript ("units of y"); formulas located for reading_check
+VERSION = 11  # 11: keep literal TeX special characters in text inside math
+# 10: a small letter on the line after a word is no subscript ("units of y"); formulas located for reading_check
 # 9: big symbols placed as drawn, fractions in fractions, piecewise rows, formulas broken across lines
 # 8: displayed sums and integrals with limits, tall roots and brackets (found by re-typesetting)
 # 7: \cdots, slanted fractions, a sentence's bracket outside the maths
@@ -176,6 +177,13 @@ def _glyph(c, notes):
         t = table.get(code)
         if t is None:
             notes.append(f'an unknown symbol (code {code} in font {font})')
+            if font == 'unknown':
+                # A drawn glyph with no name (a Type 3 font, dvips bitmaps): could be a list
+                # bullet, which _drawn_bullets decides once the lines are known.
+                c = {**c, 'text': '?'}
+                a = _glyph(c, [])
+                a.ch = UNNAMED_GLYPH
+                return a
             t = '?'
     elif 'CMEX' in font.upper() and len(t) == 1 and t.isascii() and ord(t) in CMEX_CODES and (
             t not in r'()[]{}|/\<>' or t in '<>'
@@ -214,6 +222,26 @@ def _glyph(c, notes):
         top, bottom = base, base + cmex_depth(code, t, (c['x1'] - c['x0']) / c['size']) * c['size']
     return Atom(tex=tex, text=LIGATURES.get(t, t), x0=c['x0'], x1=c['x1'], top=top, bottom=bottom,
                 base=base, size=c['size'], cls=cls, ch=t, bold=bool(BOLD_FONT.search(font)), floating=big)
+
+
+UNNAMED_GLYPH = 'unnamed glyph'
+
+
+def _drawn_bullets(rows, body, notes_raw):
+    r"""An unnamed drawn glyph first on its line, about a bullet's width and followed by words,
+    is the bullet of an \item: \textbullet drawn as a bitmap names no character. Anywhere else
+    it stays an unknown symbol."""
+    for row in rows:
+        first = min(row, key=lambda a: a.x0)
+        rest = [a for a in row if a is not first]
+        if first.ch != UNNAMED_GLYPH or not rest or not .25 * body <= first.x1 - first.x0 <= .75 * body:
+            continue
+        nxt = min(rest, key=lambda a: a.x0)
+        if nxt.x0 - first.x1 < .2 * body or any(o.ch == UNNAMED_GLYPH for o in rest):
+            continue
+        first.tex = first.text = first.ch = '•'
+        first.cls = 'n'
+        notes_raw[:] = [(b, n) for b, n in notes_raw if not (abs(b - first.base) < .01 and n.startswith('an unknown symbol'))]
 
 
 def _inside(box, x, y):
@@ -574,7 +602,13 @@ def _math_run_tex(pieces):
     return re.sub(r'\^\{([^{}]+)\}\s*/\s*_\{([^{}]+)\}', r'\\tfrac{\1}{\2}', tex).strip()
 
 
-def _text_run(pieces):
+TEXT_ESCAPES = str.maketrans({
+    '%': r'\%', '&': r'\&', '#': r'\#', '_': r'\_', '$': r'\$', '{': r'\{', '}': r'\}',
+    '\\': r'\textbackslash{}', '^': r'\textasciicircum{}', '~': r'\textasciitilde{}',
+})
+
+
+def _text_run(pieces, *, latex=False):
     words, last_word = [], None
     for w, atoms in pieces:
         chunk = ''.join(a.text for a in atoms)
@@ -586,6 +620,9 @@ def _text_run(pieces):
         last_word = w
     out, in_bold = [], False
     for chunk, bold in words:
+        if latex:
+            out.append(chunk.translate(TEXT_ESCAPES))
+            continue
         if bold and not in_bold:
             chunk = '**' + chunk
             in_bold = True
@@ -610,7 +647,7 @@ def math_latex(atoms):
             if kind == 'M':
                 out.append(_math_run_tex(pieces))
             else:
-                out.append(f'\\text{{ {_text_run(pieces).replace("**", "")} }}')
+                out.append(f'\\text{{ {_text_run(pieces, latex=True)} }}')
         texts.append(join_tex(out))
     return ' '.join(t for t in texts if t)
 
@@ -937,6 +974,16 @@ def _extent(atoms):
 
 def row_markdown(items, body, found=None):
     """A row as Markdown. found gets each formula's PDF box and span in the row."""
+    lead = min(items, key=lambda a: a.x0) if items else None
+    if lead and lead.ch == '•' and lead.cls == 'n' and len(items) > 1:
+        # A list bullet stays outside the item's maths: "• $f'(0) = 0$", not "$• f'(0) = 0$".
+        mine = []
+        rest = row_markdown([a for a in items if a is not lead], body, mine)
+        for equation in mine:
+            equation['span'] = (equation['span'][0] + 2, equation['span'][1] + 2)
+        if found is not None:
+            found.extend(mine)
+        return '• ' + rest
     out, last_word = '', None
     equations = []
     for kind, pieces in segments(items, body):
@@ -1101,6 +1148,7 @@ def read_page(page, figures=()):
     tableish = [r for r in tableish if not any(_inside(d['bbox'], (r['x0'] + r['x1']) / 2, r['y']) for d in drawings)]
     atoms, tables = _tables(atoms, tableish, verticals, body)
     rows = cluster(atoms, body)
+    _drawn_bullets(rows, body, notes_raw)
 
     left = min((min(a.x0 for a in r) for r in rows), default=0)
     entries = []  # (y, kind, payload)
@@ -1171,7 +1219,10 @@ def read_page(page, figures=()):
         width = getattr(page, 'width', None)
         centred = bool(width) and abs((x0 + x1) / 2 - width / 2) < body and x1 - x0 > width / 3
         after_sentence = prev is None or prev['kind'] != 'text' or prev['ends']
-        if (all_math and (x0 > left + 15 or (centred and after_sentence))) or (segs and segs[0][0] == 'M' and x0 > left + 3 * body):
+        # A list item ("• f has a local maximum at x = 0") is a line of text, however it starts.
+        lead = min(part, key=lambda a: a.x0)
+        item = lead.ch == '•' and lead.cls == 'n' and len(part) > 1
+        if not item and ((all_math and (x0 > left + 15 or (centred and after_sentence))) or (segs and segs[0][0] == 'M' and x0 > left + 3 * body)):
             tex = row_markdown_math(part, body)
             out, kind_now = f'$${tex}$$', 'display'
             inline = [{'latex': tex, 'display': True, 'size': body, 'box': _extent(part),
@@ -1186,7 +1237,7 @@ def read_page(page, figures=()):
         # Lines with tall math (fractions) sit further apart, so a wider gap alone does not
         # end a paragraph unless the previous line ended a sentence.
         gap = y - prev['y'] if prev else 0
-        new_paragraph = (kind_now != 'text' or prev is None or prev['kind'] != 'text' or LABEL.match(first)
+        new_paragraph = (kind_now != 'text' or prev is None or prev['kind'] != 'text' or LABEL.match(first) or first.startswith('•')
                          or gap > 3 * body or (gap > 1.65 * body and prev['ends'])
                          or (x0 > prev['left'] + .9 * body and prev['ends']))
         if new_paragraph:
@@ -1237,5 +1288,5 @@ def row_markdown_math(items, body):
     """A display row: everything is math; text words become \\text{}."""
     out = []
     for kind, pieces in segments(items, body, math_context=True):
-        out.append(_math_run_tex(pieces) if kind == 'M' else f'\\text{{ {_text_run(pieces).replace("**", "")} }}')
+        out.append(_math_run_tex(pieces) if kind == 'M' else f'\\text{{ {_text_run(pieces, latex=True)} }}')
     return join_tex(out).strip()

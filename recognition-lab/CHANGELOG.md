@@ -1,5 +1,11 @@
 # Recognition Lab changelog
 
+## Unreleased - 2026-11-09 model lifetime and vector graph labels (version number unchanged: 0.7.0)
+
+- The model server no longer outlives the program that started it. It stayed loaded for a day after Math Notebook had closed (7.4 GB of GPU memory, 13 GB of RAM): ending a program on Windows does not end the programs it started, and llama-server's `--sleep-idle-seconds` freed nothing. `vlm_helper` now puts the server in a Windows job that ends it with the starting process, however that process ends, and stops a server it started after 10 minutes without use (`IDLE_STOP_SECONDS`), never while a request is being answered. `VLM_KEEP_SERVER=1` keeps the old behaviour for benchmark scripts.
+- Vector graphs: an arrowhead hidden under an end dot no longer counts as an arrow (the curve ends at the dot); three or more one-letter names inside the grid are taken as point names (a to f along an axis), not curve labels; with one curve and one name inside the grid, that name labels the curve wherever it is printed.
+- Validation: `test_vlm_lifetime.py` (a stand-in process: a force-killed parent takes its server with it; the idle stop waits for a running request) and three graphs from one real homework PDF in `test_vector_graph.py`. Once by hand with the real Qwen3.5-9B server: 6.2 GB of GPU memory in use, back to 0 half a second after the starting program was force-killed. Actual NVDA speech was not tested.
+
 ## Unreleased - 2026-10-29 faster Qwen3.6 GPU layout (version number unchanged: 0.7.0)
 
 - The `qwen3.6-35b` profile now chooses which layers' experts go to the GPU from the free GPU memory at start-up (`expert_layout`). It prefers the small IQ2_S layers 29 down to 12 (246 MiB each; the file stores the other layers as 364-396 MiB K-quants, and IQ2_S is the slowest kind for the CPU), keeps 600 MiB spare, and keeps every expert in RAM (`--cpu-moe`) when too little is free. Reason: on Windows an overfull GPU does not fail, it spills into shared memory; a page then took 50 s instead of 4.

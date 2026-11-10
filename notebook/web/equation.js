@@ -1,7 +1,12 @@
 // Plain-text math (what you type: x^2, sqrt(x+1), (a+b)/(c-d)) <-> LaTeX.
 // Both directions are rules, not AI, so a conversion never changes the mathematics.
 
-const FUNCTIONS = ['arcsin', 'arccos', 'arctan', 'sinh', 'cosh', 'tanh', 'sin', 'cos', 'tan', 'sec', 'csc', 'cot', 'ln', 'log', 'exp', 'lim', 'max', 'min'];
+const FUNCTION_ALIASES = { asin: 'arcsin', acos: 'arccos', atan: 'arctan' };
+const FUNCTIONS = ['arcsin', 'arccos', 'arctan', 'arcsec', 'arccsc', 'arccot', 'asinh', 'acosh', 'atanh',
+  'sign', 'sinh', 'cosh', 'tanh', 'sech', 'csch', 'coth', 'sin', 'cos', 'tan', 'sec', 'csc', 'cot', 'ln', 'log', 'exp', 'lim', 'max', 'min',
+  ...Object.keys(FUNCTION_ALIASES)];
+const DIFFERENTIALS = new Set(['dx', 'dy', 'dz', 'dt', 'du', 'dr', 'ds', 'dA', 'dV']);
+const endsWithDifferential = (n) => n.type === 'mul' && n.right.type === 'sym' && DIFFERENTIALS.has(n.right.latex);
 const GREEK = ['alpha', 'beta', 'gamma', 'delta', 'Delta', 'epsilon', 'theta', 'Theta', 'lambda', 'mu', 'pi', 'Pi', 'rho', 'sigma', 'Sigma', 'tau', 'phi', 'omega', 'Omega'];
 const RELATIONS = { '<=': '\\le', '>=': '\\ge', '!=': '\\ne', '=': '=', '<': '<', '>': '>', '->': '\\to', '~=': '\\approx' };
 const SYMBOLS = { inf: '\\infty', infinity: '\\infty', pm: '\\pm', '+-': '\\pm', dx: 'dx', dy: 'dy', dz: 'dz', dt: 'dt', du: 'du', dr: 'dr', ds: 'ds', dA: 'dA', dV: 'dV' };
@@ -9,11 +14,15 @@ const SYMBOLS = { inf: '\\infty', infinity: '\\infty', pm: '\\pm', '+-': '\\pm',
 const LARGE = { int: '\\int', integral: '\\int', iint: '\\iint', iiint: '\\iiint', oint: '\\oint', sum: '\\sum', prod: '\\prod' };
 // Maths characters pasted from elsewhere (∫ x² dx copied from a page) read as their typed words.
 const PASTED = { '∫': 'int', '∬': 'iint', '∭': 'iiint', '∮': 'oint', '∑': 'sum', '∏': 'prod', 'π': 'pi', '∞': 'inf',
-  '≤': '<=', '≥': '>=', '≠': '!=', '·': '*', '×': '*', '−': '-', '÷': '/', '²': '^2', '³': '^3' };
+  '≤': '<=', '≥': '>=', '≠': '!=', '·': '*', '×': '*', '−': '-', '÷': '/', '²': '^2', '³': '^3',
+  // Greek letters typed as themselves (θ from a symbols list or Access8Math) read as their names.
+  'α': 'alpha', 'β': 'beta', 'γ': 'gamma', 'δ': 'delta', 'Δ': 'Delta', 'ε': 'epsilon', 'θ': 'theta', 'Θ': 'Theta',
+  'λ': 'lambda', 'μ': 'mu', 'Π': 'Pi', 'ρ': 'rho', 'σ': 'sigma', 'Σ': 'Sigma', 'τ': 'tau', 'φ': 'phi', 'ω': 'omega', 'Ω': 'Omega' };
+const PASTED_CHARS = new RegExp(`[${Object.keys(PASTED).filter((k) => k.length === 1).join('')}]`, 'gu');
 
 function tokenize(text) {
   const tokens = [];
-  const source = text.replace(/[∫∬∭∮∑∏π∞≤≥≠·×−÷²³]/g, (ch) => ` ${PASTED[ch]} `).replace(/ (\^[23]) /g, '$1');
+  const source = text.replace(PASTED_CHARS, (ch) => ` ${PASTED[ch]} `).replace(/ (\^[23]) /g, '$1');
   // ______ is a blank to fill in (\underline{\qquad}), not subscripts.
   const re = /\s*(_{3,}|\d+(?:\.\d+)?|\.\d+|<=|>=|!=|->|~=|\+-|[A-Za-z]+|[-+*/^_=<>(),[\]{}|'!:;]|\S)/gy;
   let m;
@@ -59,20 +68,23 @@ class Parser {
     }
     return left;
   }
-  sum() {
-    let left = this.term();
-    while (this.peek() === '+' || this.peek() === '-' || this.peek() === '+-') {
+  sum(integral = false) {
+    let term = this.term(integral);
+    let left = term;
+    while (['+', '-', '+-'].includes(this.peek()) && !(integral && endsWithDifferential(term))) {
       const op = this.next();
-      left = { type: 'bin', op, left, right: this.term() };
+      term = this.term(integral);
+      left = { type: 'bin', op, left, right: term };
     }
     return left;
   }
   startsFactor(t) {
     return t !== undefined && (/^[A-Za-z\d.]/.test(t) || t === '(' || t === '[' || t === '|' && this.absOpen === 0);
   }
-  term() {
+  term(integral = false) {
     let left = this.unary();
     for (;;) {
+      if (integral && endsWithDifferential(left)) return left;
       if (this.eat('*')) left = { type: 'mul', explicit: true, left, right: this.unary() };
       else if (this.eat('/')) left = { type: 'frac', num: left, den: this.unary() };
       else if (this.startsFactor(this.peek()) && !RELATIONS[this.peek()]) left = { type: 'mul', explicit: false, left, right: this.unary() };
@@ -138,7 +150,7 @@ class Parser {
       return { type: 'abs', arg: inner };
     }
     if (t === 'sqrt' || t === 'abs' || t === 'cbrt') {
-      const arg = this.peek() === '(' ? (this.next(), this.groupInner(')')) : this.power();
+      const arg = this.peek() === '(' ? (this.next(), this.groupInner(')')) : this.unary();
       return t === 'abs' ? { type: 'abs', arg } : { type: 'sqrt', arg, index: t === 'cbrt' ? '3' : null };
     }
     if (t === 'root') {
@@ -152,7 +164,7 @@ class Parser {
     if (t === 'lim') {
       let under = null;
       if (this.eat('_')) under = this.primary();
-      return { type: 'lim', under, arg: this.unary() };
+      return { type: 'lim', under, arg: this.term() };
     }
     if (LARGE[t]) {
       // Its limits in either order (int_0^1 or int^1_0), then the body. The body of an integral
@@ -164,16 +176,28 @@ class Parser {
       }
       const integral = LARGE[t] !== '\\sum' && LARGE[t] !== '\\prod';
       const starts = this.startsFactor(this.peek()) || this.peek() === '-' || LARGE[this.peek()];
-      const body = !starts ? null : integral ? this.sum() : this.term();
+      const body = !starts ? null : integral ? this.sum(true) : this.term();
       return { type: 'large', latex: LARGE[t], sub, sup, body };
     }
     if (FUNCTIONS.includes(t)) {
       let power = null;
       // log_2 x, log_b(x): a logarithm's base is written as a subscript.
       const base = t === 'log' && this.eat('_') ? this.primary() : null;
-      if (this.peek() === '^') { this.next(); power = this.primary(); }
-      const arg = this.peek() === '(' ? this.primary() : this.unary();
-      return { type: 'fn', name: t, power, arg, base };
+      if (this.eat('^')) {
+        const negative = this.eat('-');
+        if (!negative) this.eat('+');
+        power = this.primary();
+        if (negative) power = { type: 'neg', arg: power };
+      }
+      const fenced = this.peek() === '(';
+      let arg = fenced ? this.primary() : this.unary();
+      // sin 2x means sin(2x). An explicit operator, another named function or an
+      // integral's differential ends the unparenthesized argument.
+      while (!fenced && this.startsFactor(this.peek()) && !FUNCTIONS.includes(this.peek()) &&
+             !LARGE[this.peek()] && !DIFFERENTIALS.has(this.peek())) {
+        arg = { type: 'mul', explicit: false, left: arg, right: this.unary() };
+      }
+      return { type: 'fn', name: FUNCTION_ALIASES[t] || t, power, arg, base };
     }
     if (GREEK.includes(t)) return { type: 'sym', latex: `\\${t}` };
     if (SYMBOLS[t]) return { type: 'sym', latex: SYMBOLS[t] };
@@ -245,6 +269,9 @@ export function plainToLatex(text) {
   // An interval on its own: x in [0, 2pi).
   const alone = /^x\s*(in|∈)/i.test(source) && intervalCondition(source) && trailingInterval(source.replace(/∈/g, ' in '));
   if (alone) return domainLatex({ kind: 'interval', interval: alone });
+  // x in {-2pi, 2pi}: braces are a set, those two numbers only, not an interval.
+  const set = /(?:\bx\s*(?:in|on)|\bon)\s*\{([^{}]*,[^{}]*)\}\s*$/i.exec(source);
+  if (set) throw new Error(`Curly braces make a set: {${set[1].trim()}} is only those numbers. For an interval write [${set[1].trim()}] (ends included) or (${set[1].trim()}) (ends left out).`);
   return toLatex(new Parser(source).parse()).replace(/\s+/g, ' ').trim();
 }
 
@@ -319,7 +346,9 @@ export function splitDomain(text) {
   // ... [a, b], ... on [a, b], ... x in [a, b], ... for x in (a, b).
   const found = trailingInterval(source);
   if (found && found.lo && found.hi) {
-    const m = /^(.*?\S)\s*(,)?\s*(?:\b(on|for|when|where|if)\b\s*)?(\bx\s*in\b\s*)?$/i.exec(found.before);
+    // "x on" too, after a comma or "for" (y = sin x, x on [0, 2pi]); after a space it would take
+    // the x from sin x, so there "on" alone is the word.
+    const m = /^(.*?\S)\s*(,)?\s*(?:\b(on|for|when|where|if)\b\s*)?(\bx\s*in\b\s*|(?<=(?:,|\b(?:for|when|where|if))\s*)\bx\s*on\b\s*)?$/i.exec(found.before);
     // A bare (a, b) after a comma could be a point, so it needs "on" or "x in"; [a, b] cannot.
     if (m && /=/.test(m[1]) && (m[3] || m[4] || (m[2] && (found.open === '[' || found.close === ']')))) {
       return { main: m[1].replace(/,$/, '').trim(), condition: intervalWords(found), kind: 'interval', interval: found };
@@ -428,7 +457,9 @@ export function latexToPlain(latex) {
       if (['frac', 'dfrac', 'tfrac', 'nicefrac'].includes(name)) {
         const [num, a] = readArg(src, i);
         const [den, b] = readArg(src, a);
-        out += `${wrap(latexToPlain(num))}/${wrap(latexToPlain(den))}`;
+        const fraction = `${wrap(latexToPlain(num))}/${wrap(latexToPlain(den))}`;
+        const besideDivision = /\/\s*$/.test(out) || /^\s*(?:\/|\\div(?![A-Za-z]))/.test(src.slice(b));
+        out += besideDivision ? `(${fraction})` : fraction;
         i = b;
       } else if (name === 'sqrt') {
         let index = null;
@@ -482,7 +513,12 @@ export function latexToPlain(latex) {
       const inner = latexToPlain(arg);
       out += ch + (/[\^_]/.test(inner) && !/^\(.*\)$/.test(inner) ? `(${inner})` : wrap(inner));
       i = a;
-    } else if (ch === '{' || ch === '}') {
+    } else if (ch === '{') {
+      const [group, end] = readGroup(src, i);
+      const value = latexToPlain(group);
+      out += /^\s*[_^]/.test(src.slice(end)) ? wrap(value) : value;
+      i = end;
+    } else if (ch === '}') {
       i += 1;
     } else if (ch === '&') {
       out += ' ';

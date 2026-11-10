@@ -2,6 +2,89 @@
 
 Earlier versions are described on the [releases page](https://github.com/ahemyaz06/math-notebook/releases).
 
+## 0.7.8 (beta)
+
+Changes since 0.7.6. Version 0.7.7 was never published; its changes are listed here.
+
+### Saving and crash recovery
+
+- While you work, unsaved changes are kept as a draft on this computer, untitled documents
+  too. After a crash, the next start offers the draft; File > Recover unsaved work opens the
+  list later. A recovered document opens unsaved, at the place you were, and Ctrl+S asks where
+  to save it.
+- Saving writes the new file completely before it replaces the old one, so a failed save
+  leaves the previous file as it was.
+
+### Undo
+
+- Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes every change in the document. Before,
+  undo knew only typing: after an equation was made, a line copied down or a table inserted,
+  it did nothing, and redo could put letters back in the wrong place. Typing is one step until
+  you move the cursor or use a command; each command is one step. The status line says the
+  line you land on. In a dialog's text box, Ctrl+Z undoes only the typing in that box.
+
+### Graph sound
+
+- New choice, Settings > Graph sound > Stereo. Original (the default) sounds as before. Wider
+  places points further from the middle, so left and right are easier to tell apart, and larger
+  graphs (up to about minus 10 to 10) reach further to each side. The far ear always hears a
+  little, and the bass line moves left and right too. Choosing Wider plays a note moving from
+  the left edge to the right.
+- The Graph sound settings are in a clearer order: the sound and how it is heard (sound, clearer
+  pitch, slope sound, stereo, volumes, bass line), then dots and points of interest, then moving
+  (numbers you hear, step, speed).
+- Graph mode reads your position sooner after each arrow press, and moving no longer redraws
+  every curve.
+
+### Writing and PDFs
+
+- Recovery drafts are written once typing pauses, so typing is smoother.
+- A bullet drawn as a picture at the start of a PDF line reads as a bullet, not a question mark.
+- Greek letters typed as characters (θ, α, Δ) work in typed equations like their names.
+- An equation being changed with the arrow keys was white text on a light background in dark
+  mode; it now follows the light or dark theme. Comments beside equations do too.
+- "y = sin x, x on [0, 2pi]" left a stray "x," in the equation; it no longer does.
+- An interval in curly braces, x on {-2pi, 2pi}, is not read as an interval, because braces
+  mean a set (just those two numbers). The message now says so and suggests [ ] or ( ).
+  Shift+Enter or F11 under such a line says the line is not an equation yet, instead of
+  copying an older equation from further up.
+- Convert math, opened on an equation, set "It is written in" to LaTeX. Plain text typed over
+  it was then passed through unchanged, so the "LaTeX" had no backslashes. It now finds out the
+  format again as soon as you type. Closing the box puts the cursor back where it was.
+
+### Fixes after a review of 0.7.6
+
+- Opening an equation and closing it unchanged keeps it exactly as it was. Plain-text editing
+  is offered only when plain text can hold the equation exactly; otherwise it opens as LaTeX.
+- Typed maths: grouped powers, division between fractions, how far a limit reaches, products
+  such as sin 2x, and the inverse trigonometric functions are read correctly.
+- Teacher mode: Save and Save As are blocked during the student preview, so the preview copy
+  cannot overwrite the teacher's file; Teacher > Save student copy saves it. Hidden graph
+  formulas and the comments marked beside them are removed from the student copy in lists too.
+- Graph mode: L and S (limits and slope) say when a side is missing, when the estimate is
+  uncertain, and when the graph goes to infinity. Jumps are told apart from holes and
+  vertical asymptotes more reliably.
+- Word, braille and .tex: terms after an integral's dx stay outside the integral in Word;
+  characters Word cannot store are left out instead of breaking the file; braille with skipped
+  heading or list levels is valid; cube roots and logarithm bases survive pgfplots both ways.
+- The optional Tectonic check has a time limit per page, and runs with TeX's unsafe commands
+  turned off.
+- The optional AI download checks each file's size and checksum, resumes correctly, and
+  checks a zip's contents before unpacking it.
+
+### AI add-on
+
+- The AI model stayed loaded after Math Notebook closed or crashed, holding the graphics
+  memory (7 GB in one case, for a day). It is now ended together with the program that
+  started it, and also stopped 10 minutes after its last use, but never while it is reading.
+
+### Not tested yet
+
+- Undo and redo, crash recovery, the Wider stereo choice and the new messages have been
+  checked by the automatic tests only, not heard with NVDA.
+- Ending the AI model with the app was checked with the Qwen3.5-9B model on one computer; the
+  downloads below do not include the AI add-on.
+
 ## 0.7.6 (beta)
 
 Changes since 0.7.5. The Windows setup and portable zip both use the local PDF reader.

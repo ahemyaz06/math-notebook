@@ -10,8 +10,12 @@ Usage examples:
   3. Ask any custom question to the local VLM about an image:
      .venv\\Scripts\\python.exe vlm_helper.py demo-images/parabola-0.png --ask "Describe this graph for a blind student."
 
-  4. Stop the background VLM server manually (otherwise it auto-sleeps after 3 minutes idle):
+  4. Stop the background VLM server manually:
      .venv\\Scripts\\python.exe vlm_helper.py --stop-server
+
+The server lives only as long as the program that started it, and stops itself after
+IDLE_STOP_SECONDS without use. VLM_KEEP_SERVER=1 keeps it running after the program ends
+(for benchmark scripts that run many short programs against one loaded model).
 """
 from pathlib import Path
 import argparse
@@ -217,6 +221,78 @@ def _can_use_loopback_socket() -> bool:
         return True
 
 
+# ---------- the model's lifetime ----------
+# The model holds gigabytes of GPU memory and RAM. It once ran for a day after the program that
+# started it had ended (Math Notebook closed, a test run stopped), because ending a program on
+# Windows does not end the programs it started, and llama-server's own --sleep-idle-seconds did
+# not free the memory. So the server is tied to this process, and stopped here when idle.
+IDLE_STOP_SECONDS = 600
+_last_use = 0.0
+_owned = None  # the server process this program started
+_JOB = None  # the Windows job the server is in; it ends the server when this process ends
+
+
+def _tie_to_this_process(proc) -> bool:
+    """Windows: the server is put in a job that ends it when this process ends, however it
+    ends (closed, crashed or stopped by force)."""
+    global _JOB
+    if os.name != "nt" or os.environ.get("VLM_KEEP_SERVER") == "1":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_ulonglong * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        if _JOB is None:
+            job = kernel32.CreateJobObjectW(None, None)
+            if not job:
+                return False
+            info = Extended()
+            info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # extended limits
+                return False
+            _JOB = job  # kept open for this process's whole life; Windows closes it when it ends
+        return bool(kernel32.AssignProcessToJobObject(_JOB, int(proc._handle)))
+    except Exception:
+        return False
+
+
+def _server_busy() -> bool:
+    """True while the server is answering a request (a long page can take minutes)."""
+    try:
+        with urllib.request.urlopen(f"{VLM_URL}/slots", timeout=2.0) as resp:
+            return any(slot.get("is_processing") for slot in json.loads(resp.read().decode("utf-8")))
+    except Exception:
+        return False
+
+
+def _stop_when_idle(proc) -> None:
+    """Stops the server this program started once it has not been used for IDLE_STOP_SECONDS."""
+    while proc.poll() is None:
+        time.sleep(min(30.0, IDLE_STOP_SECONDS / 4))
+        if proc is not _owned:
+            return  # stopped and started again: the new server has its own watch
+        if time.time() - _last_use >= IDLE_STOP_SECONDS and not _server_busy():
+            with _SERVER_LOCK:
+                if proc is _owned and time.time() - _last_use >= IDLE_STOP_SECONDS:
+                    stop_vlm_server()
+            return
+
+
 def _is_server_alive() -> bool:
     try:
         req = urllib.request.Request(f"{VLM_URL}/health", method="GET")
@@ -281,7 +357,9 @@ _SERVER_LOCK = threading.Lock()
 def ensure_vlm_server(idle_sleep_seconds: int = 180, profile_name: str = None) -> bool:
     """Start llama-server on demand with GPU offload and automatic idle sleep.
     Threads asking at the same time wait for one start instead of starting two."""
+    global _last_use
     with _SERVER_LOCK:
+        _last_use = time.time()  # each use (every request asks here first) keeps it loaded
         return _ensure_vlm_server(idle_sleep_seconds, profile_name)
 
 
@@ -360,6 +438,10 @@ def _start_server(profile: VlmProfile, exe: Path, layout: tuple, idle_sleep_seco
             pass
     except Exception:
         return False
+    global _owned
+    _owned = proc
+    _tie_to_this_process(proc)
+    threading.Thread(target=_stop_when_idle, args=(proc,), daemon=True, name="vlm-idle-stop").start()
     # A cold load of a 5-6 GB model into VRAM can take longer than 25 s on
     # first use; stopping early made the first AI request fail.
     deadline = time.time() + 60.0
@@ -399,6 +481,8 @@ def _pid_is_llama_server(pid: int) -> bool:
 
 def stop_vlm_server() -> bool:
     """Terminate the owned llama-server process to free VRAM immediately without affecting other servers."""
+    global _owned
+    _owned = None
     if PID_FILE.exists():
         try:
             pid = int(PID_FILE.read_text(encoding="utf-8").strip())

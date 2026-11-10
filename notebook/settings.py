@@ -12,36 +12,38 @@ from pathlib import Path
 _lock = threading.RLock()
 
 
-def _ai_installed():
-    """The AI is an add-on: Recognition Lab's model launcher plus at least one reading model
-    on this computer. Without it (or with MATH_NOTEBOOK_NO_AI=1, the portable version) the
-    notebook reads PDFs only from their own text and never starts a model."""
+def _installed_models():
+    """Return profiles whose model, projector and runner exist on this computer."""
     if os.environ.get('MATH_NOTEBOOK_NO_AI') == '1':
-        return False
+        return []
     import sys
     lab = Path(__file__).resolve().parent.parent / 'recognition-lab'
     if not (lab / 'vlm_helper.py').is_file():
-        return False
+        return []
     if str(lab) not in sys.path:
         sys.path.append(str(lab))
     try:
         import vlm_helper
-        return any(vlm_helper.is_vlm_installed(name) for name in vlm_helper.PROFILES)
+        return [name for name in vlm_helper.PROFILES if vlm_helper.is_vlm_installed(name)]
     except Exception:
-        return False
+        return []
 
 
-AI = _ai_installed()  # whether the AI add-on is installed; ai_enabled() says if it is used
+INSTALLED_MODELS = _installed_models()
+AI = bool(INSTALLED_MODELS)
 
 
-def _env_models():
-    models = [m.strip() for m in os.environ.get('MATH_NOTEBOOK_MODELS', 'qwen3.6-35b').split(',') if m.strip()]
-    return models or ['qwen3.6-35b']
+def installed_models():
+    if not AI:
+        return []
+    preferences = [m.strip() for m in os.environ.get('MATH_NOTEBOOK_MODELS', 'qwen3.6-35b').split(',')]
+    return list(dict.fromkeys(name for name in preferences + INSTALLED_MODELS if name in INSTALLED_MODELS))
 
 
 # name: (default, allowed values or a (low, high) range for numbers)
 def _spec():
-    models = _env_models() if AI else ['']
+    models = installed_models()
+    preferred = set(m.strip() for m in os.environ.get('MATH_NOTEBOOK_MODELS', '').split(','))
     return {
         # The AI add-on, when installed, can be switched off; the notebook then works as without it.
         **({'use_ai': (True, [True, False])} if AI else {}),
@@ -49,8 +51,8 @@ def _spec():
         'reading_method': ('auto', ['auto', 'text', 'ai']) if AI else ('text', ['text']),
         'describe_pictures': (True, [True, False]) if AI else (False, [False]),
         'estimate_graph_numbers': (True, [True, False]) if AI else (False, [False]),
-        'reading_model': (models[0], None),          # checked against installed models by the server
-        'second_model': (models[1] if len(models) > 1 else '', None),
+        'reading_model': (models[0] if models else '', None),          # checked against installed models by the server
+        'second_model': (next((name for name in models[1:] if name in preferred), ''), None),
         'pages_at_once': (int(os.environ.get('MATH_NOTEBOOK_WORKERS', '2')), [1, 2]),
         # Each equation read from a PDF is typeset again (Tectonic) and compared with the page;
         # a nearby reading that matches replaces it (reading_check.py). Nothing happens without Tectonic.
@@ -71,6 +73,8 @@ def _spec():
         # Writing: say an equation as plain text when the cursor comes to it (NVDA's focus mode reads only its start)
         'say_equations': (True, [True, False]),
         'bass_mode': ('x-and-y', ['x-and-y', 'x-only', 'y-only', 'off']),
+        # Stereo: 'original' (edges almost fully left and right) or 'wider' (sound-engine.js widerPan)
+        'stereo_width': ('original', ['original', 'wider']),
         'step': (0.5, [0.1, 0.25, 0.5, 1]),
         'play_speed_ms': (400, [800, 400, 250, 150]),
         'cues': (True, [True, False]),
@@ -126,12 +130,13 @@ def validate(values, models=None):
 def load():
     """All settings: saved values over the defaults. A damaged file gives the defaults."""
     values = defaults()
+    models = installed_models()
     with _lock:
         try:
             saved = json.loads(_path().read_text(encoding='utf-8'))
-            for name, value in saved.items():
+            for name, value in (saved.items() if isinstance(saved, dict) else ()):
                 try:
-                    values.update(validate({name: value}))
+                    values.update(validate({name: value}, models))
                 except ValueError:
                     pass  # one bad value does not lose the others
         except (OSError, ValueError):

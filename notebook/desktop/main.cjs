@@ -3,7 +3,9 @@
 const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const { randomUUID } = require('node:crypto');
 const path = require('node:path');
+const { createRecoveryStore, writeAtomic } = require('./recovery.cjs');
 
 const NOTEBOOK = path.join(__dirname, '..');
 // The portable version carries its own Python next to the notebook folder and has no AI.
@@ -33,29 +35,26 @@ function portableData() {
 }
 let server = null;
 let serverUrl = null;
+const serverToken = randomUUID();
 let win = null;
 // Automated tests set MATH_NOTEBOOK_TEST=1: the window stays hidden and closes without
 // the save question, so test runs never interrupt the person using the computer.
 const TESTING = process.env.MATH_NOTEBOOK_TEST === '1';
 let allowClose = TESTING;
 
-function startServer() {
+function startServer(dataDir) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(PYTHON)) {
       reject(new Error(PORTABLE ? `The Python inside Math Notebook is missing at ${PYTHON}. Unzip the whole folder again.`
         : `Recognition Lab's Python is missing at ${PYTHON}. See recognition-lab\\README.txt.`));
       return;
     }
-    const env = { ...process.env, MATH_NOTEBOOK_PORT: '0', PYTHONIOENCODING: 'utf-8' };
-    if (INSTALLED) {
-      env.MATH_NOTEBOOK_NO_AI = '1';
-      // Python's cache files go beside the data, not into the install folder.
-      env.PYTHONPYCACHEPREFIX = path.join(process.env.MATH_NOTEBOOK_DATA || path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'MathNotebook'), 'cache');
-    } else if (PORTABLE) {
-      env.MATH_NOTEBOOK_NO_AI = '1';
-      const data = process.env.MATH_NOTEBOOK_DATA || portableData();
-      if (data) env.MATH_NOTEBOOK_DATA = data;
-    }
+    // MATH_NOTEBOOK_APP_PID: the reader ends when this app's process does, so a crash here
+    // cannot leave it (and an AI model it started) running.
+    const env = { ...process.env, MATH_NOTEBOOK_DATA: dataDir, MATH_NOTEBOOK_PORT: '0', MATH_NOTEBOOK_DESKTOP_TOKEN: serverToken, MATH_NOTEBOOK_APP_PID: String(process.pid), PYTHONIOENCODING: 'utf-8' };
+    if (PORTABLE) env.MATH_NOTEBOOK_NO_AI = '1';
+    // Python's cache files go beside the data, not into the install folder.
+    if (INSTALLED) env.PYTHONPYCACHEPREFIX = path.join(dataDir, 'cache');
     server = spawn(PYTHON, ['server.py'], { cwd: NOTEBOOK, windowsHide: true, env });
     const timer = setTimeout(() => reject(new Error('The reader did not start within 60 seconds.')), 60000);
     let log = '';
@@ -81,6 +80,7 @@ function buildMenu() {
       { type: 'separator' },
       { label: '&Save', accelerator: 'Ctrl+S', click: send('save') },
       { label: 'Save &as…', accelerator: 'Ctrl+Shift+S', click: send('saveAs') },
+      { label: 'Reco&ver unsaved work…', click: send('recover') },
       { type: 'separator' },
       { label: 'Export as &Word document…', accelerator: 'Ctrl+Shift+W', click: send('exportDocx') },
       { label: 'Export as P&DF…', click: send('exportPdf') },
@@ -91,7 +91,7 @@ function buildMenu() {
       { label: 'E&xit', role: 'quit' },
     ] },
     { label: '&Edit', submenu: [
-      { role: 'undo', label: '&Undo' }, { role: 'redo', label: '&Redo' }, { type: 'separator' },
+      { label: '&Undo', accelerator: 'Ctrl+Z', click: send('undo') }, { label: '&Redo', accelerator: 'Ctrl+Y', click: send('redo') }, { type: 'separator' },
       { role: 'cut', label: 'Cu&t' }, { role: 'copy', label: '&Copy' }, { role: 'paste', label: '&Paste' },
       { label: 'Paste as plain te&xt', accelerator: 'Ctrl+Shift+V', click: send('pastePlain') },
       { role: 'selectAll', label: 'Select &all' },
@@ -206,12 +206,17 @@ function buildMenu() {
   const pageKeys = new Set(['Ctrl+B', 'Ctrl+I', 'Ctrl+U', 'Ctrl+Shift+L', 'Ctrl+Shift+7', 'Ctrl+Enter', 'Ctrl+Alt+1', 'Ctrl+Alt+2',
     'Ctrl+Alt+3', 'Ctrl+Alt+0', 'Ctrl+Shift+E', 'Ctrl+E', 'Alt+=', 'Ctrl+F', 'Ctrl+H', 'F3', 'Shift+F3', 'Ctrl+Shift+M', 'Ctrl+Shift+W',
     'Ctrl+Shift+V', 'Ctrl+PageDown', 'Ctrl+PageUp', 'Ctrl+Shift+H', 'F1', 'Ctrl+G', 'Ctrl+Shift+G', 'Ctrl+F9', 'Ctrl+Shift+F9', 'F11', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+L',
-    'Ctrl+Shift+D', 'F7', 'Alt+F7']);
+    'Ctrl+Shift+D', 'F7', 'Alt+F7', 'Ctrl+Z', 'Ctrl+Y']);
   for (const menu of template) for (const item of menu.submenu) if (pageKeys.has(item.accelerator)) item.registerAccelerator = false;
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function registerFileHandlers() {
+function registerFileHandlers(recovery) {
+  ipcMain.handle('recovery-write', (_event, draft) => recovery.write(draft));
+  ipcMain.handle('recovery-clear', () => recovery.clear());
+  ipcMain.handle('recovery-list', () => recovery.list());
+  ipcMain.handle('recovery-take', (_event, id) => recovery.take(id));
+  ipcMain.handle('recovery-discard', (_event, id) => recovery.discard(id));
   ipcMain.handle('choose-pdf', async () => {
     const result = await dialog.showOpenDialog(win, { title: 'Import PDF', properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] });
     return result.canceled ? null : result.filePaths[0];
@@ -239,7 +244,8 @@ function registerFileHandlers() {
       file = result.filePath;
       chosen.add(file);
     }
-    fs.writeFileSync(file, content, 'utf8');
+    if (filters) fs.writeFileSync(file, content, 'utf8');
+    else await writeAtomic(file, content);
     return file;
   });
   ipcMain.handle('save-binary', async (_event, { name, bytes, filters }) => {
@@ -252,7 +258,7 @@ function registerFileHandlers() {
   ipcMain.handle('export-braille', async (_event, { name, page }) => {
     const result = await dialog.showSaveDialog(win, { title: 'Export as braille', defaultPath: name, filters: [{ name: 'Braille ready file', extensions: ['brf'] }] });
     if (result.canceled) return null;
-    const response = await fetch(`${serverUrl}api/braille`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const response = await fetch(`${serverUrl}api/braille`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': serverToken },
       body: JSON.stringify({ path: result.filePath, page }) });
     const answer = await response.json().catch(() => ({}));
     if (!response.ok) return { error: answer.error || 'The braille could not be made.' };
@@ -266,7 +272,7 @@ function registerFileHandlers() {
     fs.writeFileSync(result.filePath, data);
     // The notebook goes inside as a standard PDF attachment; Math Notebook opens it exactly.
     if (notebook) {
-      const response = await fetch(`${serverUrl}api/attach`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const response = await fetch(`${serverUrl}api/attach`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': serverToken },
         body: JSON.stringify({ path: result.filePath, notebook }) });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'The notebook could not be attached.');
     }
@@ -311,22 +317,38 @@ async function createWindow() {
     items.push({ role: 'cut', label: 'Cu&t' }, { role: 'copy', label: '&Copy' }, { role: 'paste', label: '&Paste' });
     Menu.buildFromTemplate(items).popup({ window: win });
   });
+  let closing = false;
   win.on('close', async (event) => {
     if (allowClose) return;
     event.preventDefault();
-    const dirty = await win.webContents.executeJavaScript('window.isDirty ? window.isDirty() : false').catch(() => false);
-    if (dirty) {
-      const { response } = await dialog.showMessageBox(win, { type: 'question', buttons: ['Save', "Don't save", 'Cancel'], defaultId: 0, cancelId: 2,
-        title: 'Math Notebook', message: 'Save changes before closing?' });
-      if (response === 2) return;
-      if (response === 0) {
-        // Close only if the save really happened (the save dialog can be cancelled).
-        const saved = await win.webContents.executeJavaScript('window.saveForClose()').catch(() => false);
-        if (!saved) return;
+    if (closing) return;
+    closing = true;
+    try {
+      const dirty = await win.webContents.executeJavaScript('window.isDirty ? window.isDirty() : false').catch(() => false);
+      if (dirty) {
+        const { response } = await dialog.showMessageBox(win, { type: 'question', buttons: ['Save', "Don't save", 'Cancel'], defaultId: 0, cancelId: 2,
+          title: 'Math Notebook', message: 'Save changes before closing?' });
+        if (response === 2) return;
+        if (response === 0) {
+          // Close only if the save really happened (the save dialog can be cancelled).
+          const saved = await win.webContents.executeJavaScript('window.saveForClose()').catch(() => false);
+          if (!saved) return;
+        } else {
+          // Clear from the editor so a scheduled checkpoint cannot write the draft back.
+          await win.webContents.executeJavaScript('window.discardForClose()');
+        }
       }
+      allowClose = true;
+      win.close();
+    } catch {
+      await dialog.showMessageBox(win, { type: 'error', title: 'Math Notebook', message: 'Could not finish closing the notebook. Your work is still open.' });
+    } finally {
+      closing = false;
     }
-    allowClose = true;
-    win.close();
+  });
+  win.webContents.on('render-process-gone', (_event, { reason }) => {
+    if (reason === 'clean-exit' || closing) return;
+    win.reload();
   });
   await win.loadURL(`${serverUrl}editor.html`);
   if (!TESTING) win.show();
@@ -389,10 +411,13 @@ async function checkAtStart() {
 }
 
 app.whenReady().then(async () => {
+  const dataDir = path.resolve(NOTEBOOK, process.env.MATH_NOTEBOOK_DATA || (PORTABLE && !INSTALLED && portableData())
+    || path.join(process.env.LOCALAPPDATA || app.getPath('home'), 'MathNotebook'));
+  const recovery = createRecoveryStore(path.join(dataDir, 'recovery'));
   buildMenu();
-  registerFileHandlers();
+  registerFileHandlers(recovery);
   try {
-    serverUrl = await startServer();
+    serverUrl = await startServer(dataDir);
   } catch (error) {
     dialog.showErrorBox('Math Notebook could not start', error.message);
     app.quit();
