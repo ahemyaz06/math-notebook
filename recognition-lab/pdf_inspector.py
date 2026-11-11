@@ -9,8 +9,9 @@ import io
 import math
 from pathlib import Path
 
-import cv2
 import numpy as np
+
+import image_ops
 
 MAX_PDF_BYTES = 20 * 1024 * 1024
 MAX_SELECTED_PAGES = 100
@@ -93,13 +94,13 @@ def _prose_only_box(box, words, image, width, height):
     x1, y1 = min(image.width, math.ceil(box[2]*image.width/width)), min(image.height, math.ceil(box[3]*image.height/height))
     if x1 <= x0 or y1 <= y0:
         return False
-    gray = cv2.cvtColor(np.asarray(image.crop((x0, y0, x1, y1)).convert('RGB')), cv2.COLOR_RGB2GRAY)
+    gray = image_ops.rgb_to_gray(np.asarray(image.crop((x0, y0, x1, y1)).convert('RGB')))
     h, w = gray.shape
     if min(h, w) < 8:
         return False
     ink = (gray < 175).astype('uint8') * 255
-    horizontal = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, max(18, w//5)), np.uint8))
-    vertical = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((max(18, h//5), 1), np.uint8))
+    horizontal = image_ops.open_line(ink, max(18, w//5), horizontal=True)
+    vertical = image_ops.open_line(ink, max(18, h//5), horizontal=False)
     border_x, border_y = max(3, round(w*.15)), max(3, round(h*.15))
     # Only a closed enclosure qualifies. This protects sparse first-quadrant
     # graphs whose axis intersection lies at a corner rather than the interior.
@@ -110,7 +111,7 @@ def _prose_only_box(box, words, image, width, height):
         return False
     # A border alone is not an axis pair. Permit axes on the graph boundary
     # when at least one line extends well into the interior of the enclosure.
-    crossing = cv2.dilate(horizontal, np.ones((3, 3), np.uint8)) & cv2.dilate(vertical, np.ones((3, 3), np.uint8))
+    crossing = image_ops.dilate_square(horizontal, 3) & image_ops.dilate_square(vertical, 3)
     margin_x, margin_y = max(3, round(w*.08)), max(3, round(h*.08))
     interior = crossing[margin_y:h-margin_y, margin_x:w-margin_x]
     return not np.any(interior)
@@ -167,13 +168,13 @@ def raster_regions(image):
     Thresholds are relative to page pixels rather than graph size. Tables can also
     pass this filter: classification is deliberately left to the graph reader.
     """
-    gray = cv2.cvtColor(np.asarray(image.convert('RGB')), cv2.COLOR_RGB2GRAY)
+    gray = image_ops.rgb_to_gray(np.asarray(image.convert('RGB')))
     h, w = gray.shape
     ink = (gray < 175).astype('uint8') * 255
-    horizontal = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, max(22, w // 28)), np.uint8))
-    vertical = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((max(22, h // 35), 1), np.uint8))
-    joined = cv2.dilate(horizontal | vertical, np.ones((5, 5), np.uint8))
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(joined)
+    horizontal = image_ops.open_line(ink, max(22, w // 28), horizontal=True)
+    vertical = image_ops.open_line(ink, max(22, h // 35), horizontal=False)
+    joined = image_ops.dilate_square(horizontal | vertical, 5)
+    count, labels, stats = image_ops.connected_components_with_stats(joined)
     boxes = []
     for label in range(1, count):
         x, y, bw, bh, area = map(int, stats[label])

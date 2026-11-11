@@ -70,7 +70,8 @@ function startServer(dataDir) {
 const send = (command) => () => win?.webContents.send('command', command);
 
 function buildMenu() {
-  // The same menus and keys as Word wherever Word has them.
+  // Seven menus, the same keys as Word wherever Word has them. What belongs together is one
+  // submenu (Export, Table, Graph, Teacher) instead of a menu of its own.
   const template = [
     { label: '&File', submenu: [
       { label: '&New', accelerator: 'Ctrl+N', click: send('new') },
@@ -82,10 +83,12 @@ function buildMenu() {
       { label: 'Save &as…', accelerator: 'Ctrl+Shift+S', click: send('saveAs') },
       { label: 'Reco&ver unsaved work…', click: send('recover') },
       { type: 'separator' },
-      { label: 'Export as &Word document…', accelerator: 'Ctrl+Shift+W', click: send('exportDocx') },
-      { label: 'Export as P&DF…', click: send('exportPdf') },
-      { label: 'Export as w&eb page…', click: send('exportHtml') },
-      { label: 'Export as &braille (BRF)…', click: send('exportBraille') },
+      { label: '&Export', submenu: [
+        { label: '&Word document…', accelerator: 'Ctrl+Shift+W', click: send('exportDocx') },
+        { label: '&PDF…', click: send('exportPdf') },
+        { label: 'W&eb page…', click: send('exportHtml') },
+        { label: '&Braille (BRF)…', click: send('exportBraille') },
+      ] },
       { label: '&Print…', accelerator: 'Ctrl+P', click: send('print') },
       { type: 'separator' },
       { label: 'E&xit', role: 'quit' },
@@ -99,16 +102,28 @@ function buildMenu() {
       { label: '&Find…', accelerator: 'Ctrl+F', click: send('find') },
       { label: 'Find &next', accelerator: 'F3', click: send('findNext') },
       { label: 'Find pre&vious', accelerator: 'Shift+F3', click: send('findPrevious') },
-      { label: '&Replace…', accelerator: 'Ctrl+H', click: send('replace') },
+      { label: 'R&eplace…', accelerator: 'Ctrl+H', click: send('replace') },
       { type: 'separator' },
-      { label: 'Next &heading', accelerator: 'Ctrl+PageDown', click: send('nextHeading') },
-      { label: 'Previous h&eading', accelerator: 'Ctrl+PageUp', click: send('previousHeading') },
-      { label: 'Headings &list…', accelerator: 'Ctrl+Shift+H', click: send('headingList') },
+      { label: '&Go to', submenu: [
+        { label: '&Next heading', accelerator: 'Ctrl+PageDown', click: send('nextHeading') },
+        { label: '&Previous heading', accelerator: 'Ctrl+PageUp', click: send('previousHeading') },
+        { label: '&Headings list…', accelerator: 'Ctrl+Shift+H', click: send('headingList') },
+        { type: 'separator' },
+        { label: 'Next &review note', accelerator: 'F8', click: send('nextNote') },
+        { label: 'Pre&vious review note', accelerator: 'Shift+F8', click: send('previousNote') },
+      ] },
     ] },
     { label: '&Insert', submenu: [
       { label: '&Equation…', accelerator: 'Alt+=', click: send('insertEquation') },
-      { label: '&Table…', click: send('insertTable') },
       { label: '&Graph from equations…', accelerator: 'Ctrl+Shift+G', click: send('insertGraph') },
+      { label: '&Table', submenu: [
+        { label: '&Insert table…', click: send('insertTable') },
+        { label: 'Add &row below', click: send('tableAddRow') },
+        { label: 'Add &column to the right', click: send('tableAddColumn') },
+        { label: '&Delete row', click: send('tableDeleteRow') },
+        { label: 'D&elete column', click: send('tableDeleteColumn') },
+        { label: 'Delete &table', click: send('tableDelete') },
+      ] },
       { label: 'Page &break', accelerator: 'Ctrl+Enter', click: send('pageBreak') },
     ] },
     { label: 'F&ormat', submenu: [
@@ -124,77 +139,62 @@ function buildMenu() {
       { label: 'Bu&lleted list', accelerator: 'Ctrl+Shift+L', click: send('bulletList') },
       { label: 'Nu&mbered list', accelerator: 'Ctrl+Shift+7', click: send('numberedList') },
     ] },
-    { label: 'T&able', submenu: [
-      { label: '&Insert table…', click: send('insertTable') },
-      { label: 'Add &row below', click: send('tableAddRow') },
-      { label: 'Add &column to the right', click: send('tableAddColumn') },
-      { label: '&Delete row', click: send('tableDeleteRow') },
-      { label: 'D&elete column', click: send('tableDeleteColumn') },
-      { label: 'Delete &table', click: send('tableDelete') },
-    ] },
     { label: '&Math', submenu: [
       { label: '&Edit equation', accelerator: 'Ctrl+E', click: send('editEquation') },
       { label: '&Convert line or selection to equation', accelerator: 'Ctrl+Shift+E', click: send('toEquation') },
       { label: 'Convert equation to &plain text', accelerator: 'Ctrl+T', click: send('toPlainText') },
       { label: 'Convert equation to LaTe&X text', accelerator: 'Ctrl+L', click: send('toLatexText') },
-      { label: 'Copy the equation above &down (also Shift+Enter)', accelerator: 'F11', click: send('copyEquationDown') },
       { label: 'Convert between plain text, &LaTeX and MathML…', accelerator: 'Ctrl+Shift+M', click: send('convertMath') },
-      { label: '&Read line with equations spelled out', accelerator: 'Ctrl+Shift+R', click: send('readLine') },
-      { label: '&Interval for the equation…', accelerator: 'Ctrl+Shift+D', click: send('interval') },
-    ] },
-    { label: '&Graph', submenu: [
-      { label: '&Explore graph by sound', accelerator: 'Ctrl+G', click: send('exploreGraph') },
-      { label: '&New graph from equations…', click: send('insertGraph') },
-      { label: '&Copy graph as LaTeX (pgfplots)', click: send('copyGraphLatex') },
       { type: 'separator' },
-      { label: '&Play or stop (Space in graph mode)', click: send('graphPlay') },
-      { label: 'Ne&xt point of interest (period)', click: send('graphNextPoint') },
-      { label: 'Pre&vious point of interest (comma)', click: send('graphPreviousPoint') },
-      { label: 'Next &function (Tab)', click: send('graphNextFunction') },
-      { label: '&Read the point (V)', click: send('graphReadPoint') },
-      { label: '&Describe the graph (I)', click: send('graphDescribe') },
-      { label: 'S&lope here (S)', click: send('graphSlope') },
-      { label: 'Li&mits from the left and right (L)', click: send('graphLimits') },
-      { label: 'Slope s&ound on or off (D)', click: send('graphSlopeSound') },
-      { label: 'Change the &step size (F)', click: send('graphStep') },
-      { label: '&Back to the document (Escape)', click: send('graphClose') },
+      { label: 'Copy the equation above &down (also Shift+Enter)', accelerator: 'F11', click: send('copyEquationDown') },
+      { label: 'Chec&k this line against the line above', accelerator: 'F9', click: send('checkLine') },
+      { label: '&Interval for the equation…', accelerator: 'Ctrl+Shift+D', click: send('interval') },
+      { label: '&Read line with equations spelled out', accelerator: 'Ctrl+Shift+R', click: send('readLine') },
+      { type: 'separator' },
+      { label: '&Graph', submenu: [
+        { label: '&Explore graph by sound', accelerator: 'Ctrl+G', click: send('exploreGraph') },
+        { label: '&Copy graph as LaTeX (pgfplots)', click: send('copyGraphLatex') },
+        { type: 'separator' },
+        { label: '&Play or stop (Space in graph mode)', click: send('graphPlay') },
+        { label: 'Ne&xt point of interest (period)', click: send('graphNextPoint') },
+        { label: 'Pre&vious point of interest (comma)', click: send('graphPreviousPoint') },
+        { label: 'Next &function (Tab)', click: send('graphNextFunction') },
+        { label: '&Read the point (V)', click: send('graphReadPoint') },
+        { label: '&Describe the graph (I)', click: send('graphDescribe') },
+        { label: 'S&lope here (S)', click: send('graphSlope') },
+        { label: 'Li&mits from the left and right (L)', click: send('graphLimits') },
+        { label: 'Slope s&ound on or off (D)', click: send('graphSlopeSound') },
+        { label: 'Change the &step size (F)', click: send('graphStep') },
+        { label: '&Back to the document (Escape)', click: send('graphClose') },
+      ] },
     ] },
-    { label: '&Review', submenu: [
+    { label: '&Tools', submenu: [
       { label: '&Spelling…', accelerator: 'F7', click: send('spelling') },
       { label: 'Next &misspelled word', accelerator: 'Alt+F7', click: send('nextMisspelling') },
       { label: '&Word count', click: send('wordCount') },
-      { type: 'separator' },
-      { label: '&Next review note', accelerator: 'F8', click: send('nextNote') },
-      { label: '&Previous review note', accelerator: 'Shift+F8', click: send('previousNote') },
       { label: '&Remove review note on this line', click: send('clearNote') },
-    ] },
-    { label: '&Teacher', submenu: [
-      { id: 'teacherMode', label: '&Teacher mode', type: 'checkbox', click: send('teacherMode') },
       { type: 'separator' },
-      { label: '&Hide this line from students', accelerator: 'Ctrl+Shift+F9', click: send('hideLine') },
-      { label: 'Hide the selected &words from students', accelerator: 'Ctrl+F9', click: send('hideWords') },
-      { label: 'Insert &answer box', click: send('answerBox') },
-      { label: '&Graph for students…', click: send('studentGraph') },
-      { type: 'separator' },
-      { id: 'studentPreview', label: '&Preview student copy', type: 'checkbox', click: send('studentPreview') },
-      { label: '&Save student copy…', click: send('saveStudentCopy') },
-      { label: 'Export student copy as &Word document…', click: send('exportStudentDocx') },
-      { label: 'Export student copy as P&DF…', click: send('exportStudentPdf') },
-    ] },
-    { label: '&Settings', submenu: [
-      { label: '&Reading PDFs…', accelerator: 'Ctrl+,', click: send('settingsReading') },
-      { label: '&Writing…', click: send('settingsWriting') },
-      { label: '&AI add-on…', click: send('settingsAi') },
-      { label: '&Graph sound…', click: send('settingsSound') },
-      { label: 'Sound &guide…', click: send('soundGuide') },
-      { type: 'separator' },
-      { label: 'Restore &defaults', click: send('settingsReset') },
+      { label: '&Teacher', submenu: [
+        { id: 'teacherMode', label: '&Teacher mode', type: 'checkbox', click: send('teacherMode') },
+        { type: 'separator' },
+        { label: '&Hide this line from students', accelerator: 'Ctrl+Shift+F9', click: send('hideLine') },
+        { label: 'Hide the selected &words from students', accelerator: 'Ctrl+F9', click: send('hideWords') },
+        { label: 'Insert &answer box', click: send('answerBox') },
+        { label: '&Graph for students…', click: send('studentGraph') },
+        { type: 'separator' },
+        { id: 'studentPreview', label: '&Preview student copy', type: 'checkbox', click: send('studentPreview') },
+        { label: '&Save student copy…', click: send('saveStudentCopy') },
+        { label: 'E&xport student copy as Word document…', click: send('exportStudentDocx') },
+        { label: 'Export student copy as P&DF…', click: send('exportStudentPdf') },
+      ] },
     ] },
     { label: '&Help', submenu: [
       { label: '&Keyboard shortcuts', accelerator: 'F1', click: send('keys') },
-      { label: '&Sound guide: learn the graph sounds', click: send('soundGuide') },
+      { label: '&User guide', click: () => shell.openPath(path.join(NOTEBOOK, 'README.md')) },
+      { label: 'Sound &guide', click: send('soundGuide') },
+      { type: 'separator' },
+      { label: '&Settings…', accelerator: 'Ctrl+,', click: send('settings') },
       { label: '&Check for updates…', click: () => checkForUpdate(true) },
-      { label: '&Open the user guide', click: () => shell.openPath(path.join(NOTEBOOK, 'README.md')) },
       { type: 'separator' },
       { label: '&About Math Notebook', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About Math Notebook', buttons: ['OK'],
         message: `Math Notebook ${VERSION}`.trim(),
@@ -206,8 +206,14 @@ function buildMenu() {
   const pageKeys = new Set(['Ctrl+B', 'Ctrl+I', 'Ctrl+U', 'Ctrl+Shift+L', 'Ctrl+Shift+7', 'Ctrl+Enter', 'Ctrl+Alt+1', 'Ctrl+Alt+2',
     'Ctrl+Alt+3', 'Ctrl+Alt+0', 'Ctrl+Shift+E', 'Ctrl+E', 'Alt+=', 'Ctrl+F', 'Ctrl+H', 'F3', 'Shift+F3', 'Ctrl+Shift+M', 'Ctrl+Shift+W',
     'Ctrl+Shift+V', 'Ctrl+PageDown', 'Ctrl+PageUp', 'Ctrl+Shift+H', 'F1', 'Ctrl+G', 'Ctrl+Shift+G', 'Ctrl+F9', 'Ctrl+Shift+F9', 'F11', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+L',
-    'Ctrl+Shift+D', 'F7', 'Alt+F7', 'Ctrl+Z', 'Ctrl+Y']);
-  for (const menu of template) for (const item of menu.submenu) if (pageKeys.has(item.accelerator)) item.registerAccelerator = false;
+    'Ctrl+Shift+D', 'F7', 'Alt+F7', 'Ctrl+Z', 'Ctrl+Y', 'F9']);
+  const leaveToPage = (items) => {
+    for (const item of items) {
+      if (pageKeys.has(item.accelerator)) item.registerAccelerator = false;
+      if (Array.isArray(item.submenu)) leaveToPage(item.submenu);
+    }
+  };
+  leaveToPage(template);
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
@@ -283,11 +289,12 @@ function registerFileHandlers(recovery) {
   ipcMain.handle('read-text', () => clipboard.readText());
   ipcMain.on('set-title', (_event, title) => win?.setTitle(String(title)));
   // The menus as words and keys, for the Keyboard shortcuts page (always the same as the menus).
-  ipcMain.handle('get-menu', () => Menu.getApplicationMenu().items.map((m) => ({
-    label: m.label.replace(/&/g, ''),
-    items: m.submenu.items.filter((i) => i.type !== 'separator' && i.visible !== false)
-      .map((i) => ({ label: i.label.replace(/&/g, ''), key: String(i.accelerator || '').replace(/CommandOrControl|CmdOrCtrl/g, 'Ctrl') })),
-  })));
+  // A command inside a submenu is listed with the submenu's name: "Table: Add row below".
+  const listed = (items, inside = '') => items.filter((i) => i.type !== 'separator' && i.visible !== false).flatMap((i) => {
+    const label = `${inside}${i.label.replace(/&/g, '')}`;
+    return i.submenu ? listed(i.submenu.items, `${label}: `) : [{ label, key: String(i.accelerator || '').replace(/CommandOrControl|CmdOrCtrl/g, 'Ctrl') }];
+  });
+  ipcMain.handle('get-menu', () => Menu.getApplicationMenu().items.map((m) => ({ label: m.label.replace(/&/g, ''), items: listed(m.submenu.items) })));
   // The page says when a checkbox item changes (opening a file can turn Teacher mode on).
   ipcMain.on('set-menu-checked', (_event, id, checked) => {
     const item = Menu.getApplicationMenu()?.getMenuItemById(String(id));
@@ -355,7 +362,7 @@ async function createWindow() {
 }
 
 // ---------- is there a newer version? ----------
-// Only when asked (Help > Check for updates), or at start when Settings > Writing says so (off
+// Only when asked (Help > Check for updates), or at start when Help > Settings > Writing says so (off
 // by default). It asks GitHub for the latest release of the public repository: one request,
 // with nothing about you or your documents. Nothing is downloaded or installed; a newer
 // version is offered as a link to its download page. Tests point it at a local page.
@@ -402,7 +409,7 @@ async function checkForUpdate(asked) {
 }
 global.checkForUpdate = checkForUpdate; // used by tests
 
-// At start, only if Settings > Writing has "Check for a newer version when Math Notebook starts".
+// At start, only if Help > Settings > Writing has "Check for a newer version when Math Notebook starts".
 async function checkAtStart() {
   try {
     const { values } = await (await fetch(`${serverUrl}api/settings`)).json();

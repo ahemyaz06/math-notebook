@@ -10,14 +10,7 @@
 <script type="module" src="/editor.js"></script>
 </head>
 <body class="editor">
-<div id="toolbar" class="toolbar" role="toolbar" aria-label="Toolbar. Left and right arrows move between buttons; F6 goes back to the document.">
-  <div class="group" role="group" aria-label="File">
-    <button type="button" data-command="open" title="Open a notebook (Ctrl+O)">Open</button>
-    <button type="button" data-command="save" title="Save (Ctrl+S)">Save</button>
-    <button type="button" data-command="importPdf" title="Import a PDF (Ctrl+Shift+I)">Import PDF</button>
-    <button type="button" data-command="importTex" title="Import a LaTeX .tex file">Import .tex</button>
-    <button type="button" data-command="exportDocx" title="Export as a Word document (Ctrl+Shift+W)">Export to Word</button>
-  </div>
+<div id="toolbar" class="toolbar" role="toolbar" aria-label="Toolbar">
   <div class="group" role="group" aria-label="Format">
     <label for="tb-style" class="visually-hidden">Paragraph style</label>
     <select id="tb-style" title="Paragraph style (Ctrl+Alt+1, 2, 3; Ctrl+Alt+0 for normal text)">
@@ -31,16 +24,11 @@
     <button type="button" data-command="underline" aria-pressed="false" title="Underline (Ctrl+U)"><u>Underline</u></button>
     <button type="button" data-command="bulletList" title="Bulleted list (Ctrl+Shift+L)">Bullets</button>
     <button type="button" data-command="numberedList" title="Numbered list (Ctrl+Shift+7)">Numbering</button>
-    <button type="button" data-command="insertTable" title="Insert a table">Table</button>
   </div>
-  <div class="group" role="group" aria-label="Maths and graphs">
+  <div class="group" role="group" aria-label="Maths">
     <button type="button" data-command="insertEquation" title="Insert an equation (Alt+=)">Equation</button>
-    <button type="button" data-command="convertMath" title="Convert between plain text, LaTeX and MathML (Ctrl+Shift+M)">Convert math</button>
-    <button type="button" data-command="insertGraph" title="New graph from equations (Ctrl+Shift+G); Ctrl+G on an equation graphs it">Graph</button>
-  </div>
-  <div class="group" role="group" aria-label="Teacher and help">
-    <button type="button" id="tb-teacher" data-command="teacherMode" aria-pressed="false" title="Teacher mode: mark what students will not get">Teacher mode</button>
-    <button type="button" data-command="keys" title="Keyboard shortcuts (F1)">Help</button>
+    <button type="button" data-command="insertGraph" title="New graph from equations (Ctrl+Shift+G)">Graph</button>
+    <button type="button" data-command="checkLine" title="Check this line against the line above (F9)">Check line</button>
   </div>
 </div>
 <main id="page">
@@ -66,7 +54,7 @@
 
 <dialog id="keys-dialog" aria-labelledby="keys-title" class="wide">
   <h2 id="keys-title">Keyboard shortcuts</h2>
-  <div id="keys-body" role="document" tabindex="0" aria-label="Keyboard shortcuts, by menu. Read with the arrow keys."></div>
+  <div id="keys-body" role="document" tabindex="0" aria-label="Keyboard shortcuts"></div>
   <form method="dialog"><div class="buttons"><button value="close">Close</button></div></form>
 </dialog>
 
@@ -207,7 +195,7 @@
       <button value="save" id="sg-save">Save</button>
       <button value="cancel" formnovalidate>Cancel</button>
     </div>
-    <template class="dialog-help"><p>Hidden parts are taken out of the student copy, not just hidden. Teacher > Preview student copy lets you hear the graph as students will.</p></template>
+    <template class="dialog-help"><p>Hidden parts are taken out of the student copy, not just hidden. Tools, Teacher, Preview student copy lets you hear the graph as students will.</p></template>
   </form>
 </dialog>
 
@@ -224,7 +212,7 @@
       <button value="insert" id="table-insert">Insert</button>
       <button value="cancel" formnovalidate>Cancel</button>
     </div>
-    <template class="dialog-help"><p>In a table, Tab and Shift+Tab move between cells; Tab in the last cell adds a row. The Table menu adds and deletes rows and columns.</p></template>
+    <template class="dialog-help"><p>In a table, Tab and Shift+Tab move between cells; Tab in the last cell adds a row. Insert, Table adds and deletes rows and columns.</p></template>
   </form>
 </dialog>
 
@@ -266,8 +254,13 @@
 <dialog id="settings-dialog" aria-labelledby="settings-title">
   <h2 id="settings-title">Settings</h2>
   <form method="dialog" id="settings-form">
-    <fieldset id="settings-reading">
-      <legend>Reading PDFs</legend>
+    <div id="settings-tabs" role="tablist" aria-label="Settings">
+      <button type="button" role="tab" id="settings-tab-reading" aria-controls="settings-reading" aria-selected="true">Reading PDFs</button>
+      <button type="button" role="tab" id="settings-tab-writing" aria-controls="settings-writing" aria-selected="false" tabindex="-1">Writing</button>
+      <button type="button" role="tab" id="settings-tab-sound" aria-controls="settings-sound" aria-selected="false" tabindex="-1">Graph sound</button>
+      <button type="button" role="tab" id="settings-tab-ai" aria-controls="settings-ai" aria-selected="false" tabindex="-1">AI add-on</button>
+    </div>
+    <div class="settings-panel" role="tabpanel" id="settings-reading" aria-labelledby="settings-tab-reading">
       <div id="reading-ai-choice">
         <label for="set-reading_method">How pages are read</label>
         <select id="set-reading_method" name="reading_method">
@@ -282,9 +275,8 @@
         <option value="2">2</option>
       </select>
       <label class="check"><input type="checkbox" id="set-check_readings" name="check_readings"> Check each equation read from a PDF by typesetting it again and comparing it with the page, and correct it when a nearby reading matches (needs Tectonic; slower)</label>
-    </fieldset>
-    <fieldset id="settings-ai">
-      <legend>AI add-on</legend>
+    </div>
+    <div class="settings-panel" role="tabpanel" id="settings-ai" aria-labelledby="settings-tab-ai" hidden>
       <p id="settings-no-ai" hidden>The AI add-on is not installed. Everything else works without it. Only pictures, and
         pages whose maths is stored as pictures or shapes (scans), cannot be read.</p>
       <label id="use-ai-label" class="check"><input type="checkbox" id="set-use_ai" name="use_ai"> Use the AI add-on (for pictures, and for pages whose maths is not stored as text)</label>
@@ -296,15 +288,13 @@
         <label for="set-second_model">Second model, re-reads AI pages that have review notes</label>
         <select id="set-second_model" name="second_model"></select>
       </div>
-    </fieldset>
-    <fieldset id="settings-writing">
-      <legend>Writing</legend>
+    </div>
+    <div class="settings-panel" role="tabpanel" id="settings-writing" aria-labelledby="settings-tab-writing" hidden>
       <label><input type="checkbox" id="set-step_into_equations" name="step_into_equations"> Right and Left arrows go into an equation and move through it one symbol at a time, as plain text you can change</label>
       <label><input type="checkbox" id="set-check_updates" name="check_updates"> Check for a newer version when Math Notebook starts (asks GitHub once; nothing is downloaded; Help, Check for updates asks any time)</label>
       <label><input type="checkbox" id="set-say_equations" name="say_equations"> Say an equation when the cursor comes to it (in focus mode NVDA reads only its start)</label>
-    </fieldset>
-    <fieldset id="settings-sound">
-      <legend>Graph sound</legend>
+    </div>
+    <div class="settings-panel" role="tabpanel" id="settings-sound" aria-labelledby="settings-tab-sound" hidden>
       <label for="set-sound_profile">Sound</label>
       <select id="set-sound_profile" name="sound_profile">
         <optgroup label="Calm">
@@ -394,14 +384,15 @@
         <option value="250">Smooth: 0.25 seconds a step</option>
         <option value="150">Fast: 0.15 seconds a step</option>
       </select>
-    </fieldset>
+    </div>
     <p id="settings-error" class="error" role="alert"></p>
     <div class="buttons">
       <button value="save" id="settings-save">Save</button>
       <button value="cancel" formnovalidate>Cancel</button>
       <button type="button" id="settings-defaults">Restore defaults</button>
     </div>
-    <template class="dialog-help"><p>PDFs made with LaTeX (most course notes and homework) are read from their own text, by rules: every equation exactly as printed.
+    <template class="dialog-help"><p>Settings has four tabs: Reading PDFs, Writing, Graph sound and AI add-on. On a tab, Left and Right arrows change tab and Tab goes into it; Ctrl+Tab and Ctrl+Shift+Tab change tab from anywhere. Save keeps the changes on every tab.</p>
+      <p>PDFs made with LaTeX (most course notes and homework) are read from their own text, by rules: every equation exactly as printed.
       The AI add-on, when installed, is only for pictures and for pages whose maths is not stored as text.</p>
       <p>Graph sound, in this order: the sound and how it is heard (the sound, clearer pitch, the slope sound, stereo, the volumes and the bass line), then dots and points of interest, then moving (numbers you hear, the step and the speed).
       Moving through the sounds plays a few notes of each; Listen plays a whole example: up, down, back to zero, then a solid dot and an open dot.

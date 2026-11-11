@@ -31,11 +31,12 @@ Each part in a sentence; the details follow in the same order.
 
 Open Math Notebook from the Start menu if you installed it, or run `Math Notebook.exe`
 from the extracted portable folder. A window opens with the cursor in an empty
-document. Press Alt for the menu bar (File, Edit, Insert, Format, Table, Math,
-Graph, Review, Teacher, Settings, Help), as in Word, and the most used commands are also
-buttons on the toolbar above the document, each with its name written on it. The toolbar is
-one Tab stop: the arrow keys move along it, and F6 goes between the toolbar and the document.
-F1 opens the keyboard shortcuts page (made from the menus, so it is always right).
+document. Press Alt for the menu bar: File, Edit, Insert, Format, Math, Tools, Help. What
+belongs together is a submenu: File > Export, Edit > Go to, Insert > Table, Math > Graph and
+Tools > Teacher. Settings is in Help (Ctrl+comma). A small toolbar above the document has the
+paragraph style, bold, italic, underline, the two lists, Equation, Graph and Check line; it is
+one Tab stop, the arrow keys move along it, and F6 goes between it and the document.
+F1 opens the keyboard shortcuts page.
 
 
 ## The portable version (no AI, nothing to install)
@@ -52,7 +53,7 @@ user by default, with all users as a choice. The setup is unsigned, so Windows m
 when it starts. The app keeps settings, imported PDFs and window files in
 `%LOCALAPPDATA%\MathNotebook`. Run a newer setup to upgrade in place and keep your data.
 You can uninstall through Windows Installed apps and choose whether to keep the data.
-Help > About shows the version in either package. See [what changed in 0.7.8](CHANGELOG.md).
+Help > About shows the version in either package. See [what changed in 0.7.9](CHANGELOG.md).
 
 
 ## Writing (the keys are Word's)
@@ -73,9 +74,9 @@ a save succeeds. Discard a draft from the recovery list when you no longer need 
 - Ctrl+Shift+L bulleted list, Ctrl+Shift+7 numbered list; Tab and Shift+Tab move an item
   in and out a level; Enter on an empty item ends the list.
 - Insert > Table: columns, rows, header row. Tab and Shift+Tab move between cells; Tab in
-  the last cell adds a row. The Table menu adds and deletes rows and columns.
+  the last cell adds a row. Insert > Table adds and deletes rows and columns.
 - Ctrl+Enter: page break. Ctrl+F find (Enter goes to the match), F3 and Shift+F3 find
-  again, Ctrl+H replace (one, or all). Review > Word count.
+  again, Ctrl+H replace (one, or all). Tools > Word count.
 - Ctrl+PageDown and Ctrl+PageUp: next and previous heading; Ctrl+Shift+H lists the
   headings. With these you can move around while typing, without NVDA's browse mode.
 - Pasting from a web page keeps headings, lists, tables, bold and italic, and its MathML
@@ -89,9 +90,9 @@ a save succeeds. Discard a draft from the recovery list when you no longer need 
   the same one that draws the red underlines, so Add to dictionary teaches Word and Edge too.
   Equations and graph descriptions are not checked, nor maths names written as words
   (sin, ln, arcsin).
-- Ctrl+S saves a `.mathnb` notebook. File > Export as Word document (Ctrl+Shift+W):
+- Ctrl+S saves a `.mathnb` notebook. File > Export > Word document (Ctrl+Shift+W):
   every equation is a real Word equation, so Word, NVDA and MathCAT read it as maths;
-  Word itself is not needed for this. File > Export as PDF makes a tagged PDF with the
+  Word itself is not needed for this. File > Export > PDF makes a tagged PDF with the
   headings as bookmarks (equations in PDFs are hard for screen readers, so share Word
   files where you can). Ctrl+P prints.
 
@@ -112,11 +113,29 @@ current line with equations spelled out.
 - Working line by line: Enter after an equation starts a new line, always. Shift+Enter (or
   F11) copies the last equation above the cursor down (onto this line if it is empty, otherwise
   onto a new line below), ready to change.
+- Checking a step: F9 on an equation says whether it is still the same maths as the equation
+  above it. Both lines are worked out at the same fixed numbers (inside the interval, when the
+  line has one), so it is rules, not AI, and it never gives the answer:
+  - expressions and `y = ...` lines must have the same values: under `(x+1)^2`, the line
+    `x^2 + 1` gives "Not the same as the line above. At x = 1.7 the line above is 7.29 and this
+    line is 3.89";
+  - equations to solve must have the same solutions: under `x^2 = 2x`, the line `x = 2` gives
+    "the line above has x = 0, which is missing here"; answers can be listed, `x = 2, x = -2`;
+  - inequalities must be true for the same numbers;
+  - `f'(x) = ...`, `y' = ...`, `dy/dx = ...` and `d/dx (...) = ...` are compared with the
+    measured slope of the function written above;
+  - `lim_(x->2) ... = 4` and `int_0^1 x^2 dx = 1/3` are worked out by numbers, and an integral
+    with no limits is checked by taking the slope of the answer.
+  It also says when a line has a value where the other has none (`(x^2 - 4)/(x - 2)` and
+  `x + 2` at x = 2). A line of text that begins with `=` is compared with the equation above
+  it. Words or a heading end a piece of work, so a new problem is not compared with the last.
+  When it cannot tell (sums, a limit that settles too slowly) it says "Could not check" and
+  never guesses. Same values at every number tried is strong evidence, not a proof.
 - Moving through an equation: Right arrow into an equation (or Left into it from after it)
   shows it as its plain text, `f(x) = 3 sin(x), x in [0, pi]`, so the arrows move one symbol at
   a time and you can type to change it. When the cursor leaves it, it is an equation again,
   exactly as it was if you changed nothing; Enter there also finishes it and starts a new line.
-  If what you typed is not maths, it stays as text and the notebook says why. Settings > Writing
+  If what you typed is not maths, it stays as text and the notebook says why. Help > Settings > Writing
   can turn this off (then the arrows go past an equation in one step).
 - Letters in equations are given to NVDA as plain letters (x, not the maths letter 𝑥, which
   Chromium uses for italics and NVDA reads as "x normalized"). They still look italic.
@@ -144,7 +163,7 @@ current line with equations spelled out.
   text; Ctrl+Shift+E makes either one an equation again.
 - In focus mode NVDA reads only the start of an equation (MathCAT reads it whole in browse
   mode, NVDA+Space). So when the cursor comes to an equation, the notebook says it as plain
-  text ("Equation: x = log(3^x)"). Settings > Writing can turn this off.
+  text ("Equation: x = log(3^x)"). Help > Settings > Writing can turn this off.
 - All conversions are rules, not AI (`web/equation.js`, `web/mathml.js`). The Word
   equations were checked in Word itself against Microsoft's own converter on 119
   equations. The source checkout includes `test-fixtures/math/latex-cases.txt`.
@@ -174,13 +193,13 @@ If you have the teacher’s LaTeX source, import it directly. The source checkou
 
 ## Sharing documents: PDF and Word, nothing special
 
-Nobody else needs this app. Hand in or send what everyone opens: File > Export as PDF or as
+Nobody else needs this app. Hand in or send what everyone opens: File > Export > PDF or as
 Word document. An exported PDF carries the notebook inside it as a standard PDF attachment
 (the paperclip in Adobe Reader; e-invoices carry their data the same way). Every PDF reader
 shows and prints it as usual; when Math Notebook imports that PDF, it opens the document
 inside it exactly (equations, graphs with sound) instead of reading the printed page.
 
-File > Export as braille (BRF) makes a braille ready file for an embosser or a braille display,
+File > Export > Braille (BRF) makes a braille ready file for an embosser or a braille display,
 with BrailleBlaster (free, from the American Printing House: brailleblaster.org), which has to be
 installed. The notebook hands it the document with every equation as MathML; BrailleBlaster
 translates it with its own settings. For Nemeth maths, choose UEB with Nemeth in BrailleBlaster's
@@ -191,18 +210,18 @@ follows Owen Petronick's Braille Check.
 ## Teacher mode
 
 For a TA, a tutor or disability services making a worksheet, or for making your own
-practice: Teacher > Teacher mode. Then:
+practice: Tools > Teacher > Teacher mode. Then:
 
-- Teacher > Hide this line from students (Ctrl+Shift+F9) marks a whole line (a hint, a
+- Tools > Teacher > Hide this line from students (Ctrl+Shift+F9) marks a whole line (a hint, a
   worked solution). Hide the selected words (Ctrl+F9) blanks words in a line: the student
   copy shows ______ there.
-- Teacher > Insert answer box: write the answer in it; students get the box empty.
-- Teacher > Graph for students (on a graph line): hide the formula (students get the curve's
+- Tools > Teacher > Insert answer box: write the answer in it; students get the box empty.
+- Tools > Teacher > Graph for students (on a graph line): hide the formula (students get the curve's
   points and find the function), and any of the zeros, the y-intercept, peaks and valleys,
   holes and dots, asymptotes. Hidden points are not announced in graph mode either.
-- Teacher > Preview student copy shows exactly what students get (read only); its graphs
+- Tools > Teacher > Preview student copy shows exactly what students get (read only); its graphs
   sound as the students' will.
-- Teacher > Save student copy, or export the student copy as Word or PDF. The hidden parts
+- Tools > Teacher > Save student copy, or export the student copy as Word or PDF. The hidden parts
   are taken out of these files, not just hidden: a graph whose formula is hidden keeps only
   points along its curve. The teacher's own file is the answer key and reopens in Teacher mode.
 
@@ -220,8 +239,8 @@ practice: Teacher > Teacher mode. Then:
 - The description says where the graph crosses the axes, its peaks and valleys, holes,
   vertical asymptotes, and for piecewise functions each row and what happens where rows meet,
   in the course's words: a jump, or a hole (removable discontinuity) with the point elsewhere.
-- Graph > Copy graph as LaTeX gives pgfplots code that draws the same graph in a .tex file.
-- The Graph menu also has every graph mode action (play, next point, describe, step size).
+- Math > Graph > Copy graph as LaTeX gives pgfplots code that draws the same graph in a .tex file.
+- Math > Graph also has every graph mode action (play, next point, describe, step size).
 
 ## Converting a PDF
 
@@ -229,7 +248,7 @@ File > Import PDF (Ctrl+Shift+I; Ctrl+I is italic, as in Word). Pages are added 
 can keep working. If you switch notebooks during an import, the remaining pages stay out
 of the new notebook. Import the PDF again to use pages that have already been read.
 
-How a page is read is chosen in Settings > Reading PDFs:
+How a page is read is chosen in Help > Settings > Reading PDFs:
 
 - **Automatic** (the default): the notebook reads supported PDFs using the letters and
   symbols on the page. It uses their positions to tell fractions from exponents, for
@@ -248,7 +267,7 @@ How a page is read is chosen in Settings > Reading PDFs:
 **Checking PDF equations (optional, needs Tectonic).** For supported pages read without
 AI, the notebook draws the equations again and compares them with the PDF. It can correct
 some mistakes, such as a subscript read as an exponent. Other mistakes may stay in the
-document, so check important equations against the PDF. The switch is Settings > Reading
+document, so check important equations against the PDF. The switch is Help > Settings > Reading
 PDFs > Check each equation. It is on by default and needs Tectonic to do the check.
 Tectonic is not included with Math Notebook. To use the check, install it yourself
 ([installing Tectonic](https://tectonic-typesetting.github.io/book/latest/installation/), or
@@ -276,7 +295,7 @@ each problem a level-2 heading, and an empty answer line under each problem.
 
 - On pages the AI reads, equations are copied by the local model Qwen3.6-35B-A3B and then compared, character by
   character, with the text built into the PDF. Where they differ, the line gets a review
-  note (underlined). F8 and Shift+F8 go to the next and previous note and read it; Review >
+  note (underlined). F8 and Shift+F8 go to the next and previous note and read it; Tools >
   Remove review note clears it once you have fixed the line. Example from real homework:
   the model wrote "f and q" where the PDF has "f and g".
 - Supported LaTeX graphs are read from the PDF drawing (corners, peaks, zeros, dots, dashed
@@ -284,9 +303,10 @@ each problem a level-2 heading, and an empty answer line under each problem.
 
 ## Settings
 
-The Settings menu (Alt, then S) has small dialogs: Reading PDFs (Ctrl+comma), Writing, AI
-add-on, and Graph sound. Tab moves between the choices, Enter saves, Escape cancels. Restore defaults puts
-everything back. Settings are saved in `%LOCALAPPDATA%\MathNotebook\settings.json`.
+Help > Settings (Ctrl+comma) is one window with four tabs: Reading PDFs, Writing, Graph
+sound and AI add-on. It opens on the first tab. Left and Right arrows change tab, Tab goes
+into the tab's settings, and Ctrl+Tab or Ctrl+Shift+Tab change tab from anywhere. Save keeps
+the changes on every tab, Escape cancels, and Restore defaults puts everything back. Settings are saved in `%LOCALAPPDATA%\MathNotebook\settings.json`.
 
 - The AI add-on: "Use the AI add-on" switches it off and on (first in the dialog). Off, the
   notebook works exactly as without the add-on and its choices are hidden. Not installed
@@ -332,17 +352,17 @@ Insert > Graph from equations (Ctrl+Shift+G) makes a graph from functions you ty
   continuous, a hole, a jump, a vertical asymptote, or the curve is only on one side.
 - D: the slope sound on or off. After each step's note comes a soft second note for the slope,
   on the same pitch scale as heights: high is rising, the middle note is flat, low is falling.
-  At a peak or a valley it passes the middle note. Settings > Graph sound can have it on from
+  At a peak or a valley it passes the middle note. Help > Settings > Graph sound can have it on from
   the start.
 - Numbers are said rounded to the nearest half (a height of 4.19 is "4", a zero at 1.73 is
-  "1.5", 0.00004 is "0"); where you are along x is said as you stepped. Settings > Graph sound >
+  "1.5", 0.00004 is "0"); where you are along x is said as you stepped. Help > Settings > Graph sound >
   Numbers you hear can choose one decimal or exact. The document's own text stays exact.
 - A graph drawn in a worksheet (TikZ) keeps only what the page shows: the curve, its points
   and dots, not its formula.
 - Sounds: the gentle profile (soft attacks), a small bump for solid dots, a breath of wind
   for open dots (holes), a slide through sharp corners (down then up for a valley corner,
   up then down for a peak), a chime at the origin. At a jump both dots are heard, each at its
-  own height. Settings > Graph sound > Dots and corners can switch back to the original
+  own height. Help > Settings > Graph sound > Dots and corners can switch back to the original
   held tone and air breath. The Progress beep profile plays one beep per step whose pitch
   climbs from the bottom of the graph to the top, softer below zero.
 
@@ -358,7 +378,7 @@ start-up it puts as many expert layers on the graphics card as fit in the free m
 so close other programs that use the graphics card before importing a PDF. The model is
 loaded only while it is needed: it is stopped 10 minutes after its last use (never while it
 is reading) and when Math Notebook closes, also if the app crashes.
-Another model can be chosen in Settings > Reading PDFs (the environment variable
+Another model can be chosen in Help > Settings > Reading PDFs (the environment variable
 MATH_NOTEBOOK_MODELS sets the default).
 
 ## Limits, and what is not tested

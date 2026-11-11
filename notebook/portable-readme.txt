@@ -1,14 +1,15 @@
-MATH NOTEBOOK 0.7.8 BETA (portable)
+MATH NOTEBOOK 0.7.9 BETA (portable)
 
 A document editor for maths that works like Word and reads well with NVDA and MathCAT.
 Nothing to install, and no AI: everything is done by exact rules on this computer.
 
 START
 Extract all files from the zip into a writable folder, then open "Math Notebook.exe".
-The cursor is in an empty document. Help > Open the user guide opens the full guide.
-Press Alt for the menus (File, Edit, Insert, Format, Table, Math, Graph, Review, Teacher,
-Settings, Help). The toolbar above the document has the most used commands as named
-buttons; F6 goes between it and the document. F1 opens the keyboard shortcuts page.
+The cursor is in an empty document. Help > User guide opens the full guide.
+Press Alt for the menus (File, Edit, Insert, Format, Math, Tools, Help). Tables are in
+Insert > Table, graphs in Math > Graph, teacher mode in Tools > Teacher, and Settings is in
+Help (Ctrl+comma). F6 goes between the small toolbar and the document. F1 opens the keyboard
+shortcuts page.
 
 The folder can live anywhere (Desktop, a USB stick). Keep all of it together. Your
 settings and the PDFs you import are kept in the "data" folder next to
@@ -25,7 +26,7 @@ Ctrl+PageDown, Ctrl+PageUp  next and previous heading; Ctrl+Shift+H lists the he
 Ctrl+Z, Ctrl+Y              undo, redo (any change, equations included)
 Ctrl+S, Ctrl+P              save, print
 Ctrl+Shift+W                export as a Word document (equations are real Word equations)
-File > Export as PDF        a tagged PDF
+File > Export > PDF        a tagged PDF
 
 MATHS
 Type maths as plain text, for example (x^2 - 4)/(x - 2), select it, and press
@@ -42,7 +43,7 @@ F7 checks spelling as in Word (the Windows spell checker); Alt+F7 goes to the ne
 
 THIS IS A BETA
 Math Notebook is still being built and is updated often. Help > Check for updates asks
-GitHub whether a newer version is out (Settings > Writing can do it at each start; it is off
+GitHub whether a newer version is out (Help > Settings > Writing can do it at each start; it is off
 unless you turn it on). To update, close Math Notebook, extract the new zip into a new folder,
 and copy the old "data" folder into it to keep your settings and imported PDFs.
 Ctrl+T turns an equation back into plain text, Ctrl+L into LaTeX text; Ctrl+Shift+E makes
@@ -56,7 +57,7 @@ Enter on a graph line opens graph mode. J and K step along the curve, Space play
 and comma jump between points of interest, S says the slope, L the limits from the left and
 the right, D adds a soft note for the slope after each step, I describes the graph, question
 mark lists every key, Escape goes back. Help > Sound guide plays every sound with what it
-means. Settings > Graph sound chooses the sound: calm, instruments, beeps or game sounds.
+means. Help > Settings > Graph sound chooses the sound: calm, instruments, beeps or game sounds.
 
 LATEX FILES AND SHARING
 File > Import LaTeX (.tex) reads a teacher's LaTeX source exactly, including pgfplots graphs,
@@ -65,7 +66,7 @@ them. An exported PDF carries the notebook inside it (a standard PDF attachment)
 Notebook opens it again exactly.
 
 TEACHER MODE
-Teacher > Teacher mode lets a TA or tutor hide lines, words, answers and parts of graphs
+Tools > Teacher > Teacher mode lets a TA or tutor hide lines, words, answers and parts of graphs
 (even the formula: students hear the curve and find it), preview the student copy, and save
 or export it. Hidden parts are taken out of the student's files, not just hidden.
 
@@ -79,7 +80,7 @@ pictures (their place is marked), and pages that are scans or whose maths is dra
 OPTIONAL TOOLS
 Install Tectonic separately to compare supported PDF equations against the page.
 Tectonic downloads TeX packages when first used. Install BrailleBlaster separately
-for File > Export as braille (BRF). The full user guide explains both tools.
+for File > Export > Braille (BRF). The full user guide explains both tools.
 
 NEEDS
 64-bit Windows 10 or 11. You can export Word files without Microsoft Word.

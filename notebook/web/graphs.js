@@ -4,7 +4,7 @@
 import { intervalCondition, latexToPlain, parsePlain, plainToLatex, splitDomain } from './equation.js';
 import { compileEquation, compileExpression, detectLandmarks, formatNumber } from '/sound/graph-math.js';
 
-// How numbers are said while exploring a graph (Settings > Graph sound): 'half' rounds to the
+// How numbers are said while exploring a graph (Help > Settings > Graph sound): 'half' rounds to the
 // nearest half (4.1931 is 4, 0.894 is 1, 0.00004 is 0), 'tenth' to one decimal, 'exact' keeps
 // six digits. What is written into the document (makeGraph, studentGraph) has at most two
 // decimals (1.41421 is 1.41), whatever the setting.

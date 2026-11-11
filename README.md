@@ -30,14 +30,14 @@ relying on it.
 
 The notebook needs the other two folders, so keep them together.
 
-The [changelog](notebook/CHANGELOG.md) lists what changed in 0.7.8, since 0.7.6.
+The [changelog](notebook/CHANGELOG.md) lists what changed in 0.7.9.
 
 ## Download it (Windows)
 
 **This is a beta.** The app is still being built and is updated often; things may change,
 and some parts are not finished or fully tested (see "What is tested and what is not").
 Help > Check for updates asks GitHub whether a newer version is out and offers its download
-page; Settings > Writing can do this each time the app starts (off unless you turn it on).
+page; Help > Settings > Writing can do this each time the app starts (off unless you turn it on).
 Nothing is downloaded or installed by itself: a newer setup is run by you, installs over the
 old one and keeps your settings.
 
@@ -53,7 +53,7 @@ both are installed separately.
   `Math Notebook.exe`. Its settings stay in a `data` folder beside it. `Read me first.txt`
   inside explains how to start and update it.
 
-In either version, choose Help > Open the user guide for the full instructions.
+In either version, choose Help > User guide for the full instructions.
 
 The app is not code-signed, so Windows may warn before it runs the setup or the exe.
 SmartScreen's "Windows protected your PC": choose "More info", then "Run anyway". An "Open
@@ -91,6 +91,10 @@ portable zip and SHA-256 checksums go into `dist`.
   next start offers to recover unsaved work.
 - Working line by line: **Enter** after an equation starts a new line. **Shift+Enter** (or
   **F11**) copies the equation above down, ready to change.
+- **F9** checks the line against the equation above it: "Same as the line above", or where
+  they differ ("At x = 1.7 the line above is 7.29 and this line is 3.89"). It compares values,
+  the solutions of equations, inequalities, derivatives, limits and integrals by working them
+  out at fixed numbers; it never gives the answer, and says so when it cannot tell.
 - Comments, as in programming: anything after `#` or `//` stays words beside the equation and
   never becomes maths: `y = x^2 # the parabola`.
 - Intervals, as written in class: `y = sin x, [0, 2pi]`, `y = sin x on (0, pi]`,
@@ -105,7 +109,7 @@ portable zip and SHA-256 checksums go into `dist`.
     second note for the slope after each step;
   - **I** describes the graph; **Escape** goes back.
 - Help > Sound guide plays every sound with what it means, and has a short quiz.
-- File > Import PDF or Import LaTeX (.tex) opens course files. File > Export as Word gives
+- File > Import PDF or Import LaTeX (.tex) opens course files. File > Export > Word document gives
   real Word equations.
 
 The full guide is [notebook/README.md](notebook/README.md).
@@ -125,7 +129,7 @@ command is optional and downloads another model (about 6.6 GB):
 .\recognition-lab\.venv\Scripts\python.exe recognition-lab\download_qwen35_9b.py
 ```
 
-Choose Qwen3-VL-8B or, if you added it, Qwen3.5-9B in Settings > Reading PDFs.
+Choose Qwen3-VL-8B or, if you added it, Qwen3.5-9B in Help > Settings > Reading PDFs.
 
 ## Checking equations with Tectonic (optional)
 
@@ -136,12 +140,12 @@ original PDF. Install Tectonic separately
 ([installation](https://tectonic-typesetting.github.io/book/latest/installation/); for Windows,
 the zip from its [releases page](https://github.com/tectonic-typesetting/tectonic/releases))
 and put `tectonic.exe` on your PATH or set the environment variable `TECTONIC` to its full path.
-The switch is Settings > Reading PDFs, "Check each equation". Details are in the
+The switch is Help > Settings > Reading PDFs, "Check each equation". Details are in the
 [notebook's guide](notebook/README.md#converting-a-pdf).
 
 ## Braille
 
-File > Export as braille (BRF) makes a braille ready file with
+File > Export > Braille (BRF) makes a braille ready file with
 [BrailleBlaster](https://www.brailleblaster.org/) (free, from the American Printing House), which
 has to be installed. Every equation goes to it as MathML; for Nemeth maths, choose UEB with
 Nemeth in BrailleBlaster's Translation settings. The approach follows Owen Petronick's Braille Check.
@@ -176,7 +180,7 @@ Nemeth in BrailleBlaster's Translation settings. The approach follows Owen Petro
 - The apps listen only on this computer (127.0.0.1) and refuse requests from other websites.
 - The notebook filters imported documents and pasted text before adding them to the editor.
 - The app goes online only to check for a newer version: when you choose Help > Check for
-  updates, or at each start if you turned that on in Settings > Writing. It asks GitHub's public
+  updates, or at each start if you turned that on in Help > Settings > Writing. It asks GitHub's public
   "latest release" address once; nothing about you or your documents is sent.
 - If you install Tectonic for the equation check, Tectonic itself downloads the TeX packages it
   needs from its own servers the first time it typesets. Your documents are not sent; the

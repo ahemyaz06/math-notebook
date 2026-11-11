@@ -28,14 +28,21 @@ APP = OUT / 'resources' / 'app'
 ELECTRON = ROOT / 'node_modules' / 'electron' / 'dist'
 BASE_PYTHON = Path(sys.base_prefix)  # the Python this venv was made from
 
-# What the reader imports (pdf_inspector needs OpenCV and NumPy, the reader pdfplumber and PDFium).
-PACKAGES = ['pypdfium2', 'pdfplumber', 'opencv-python', 'numpy']
+# What the reader imports (pdf_inspector needs NumPy, the reader pdfplumber and PDFium). Not OpenCV:
+# image_ops.py does pdf_inspector's few image steps with NumPy and gives the same results.
+PACKAGES = ['pypdfium2', 'pdfplumber', 'numpy']
 NOTEBOOK_FILES = ['server.py', 'notebook_core.py', 'pdf_text_reader.py', 'reading_check.py', 'checker.py', 'settings.py', 'attachments.py', 'spelling.py', 'braille.py', 'README.md', 'CHANGELOG.md', 'VERSION']
 VERSION = (NOTEBOOK / 'VERSION').read_text(encoding='utf-8').strip()  # the one place the version is set
-LAB_FILES = ['pdf_inspector.py', 'vector_graph.py']
+LAB_FILES = ['pdf_inspector.py', 'image_ops.py', 'vector_graph.py']
 # Parts of the standard library a reading server never uses.
 STDLIB_SKIP = {'test', 'idlelib', 'tkinter', 'turtledemo', 'ensurepip', 'lib2to3', 'site-packages', '__pycache__', 'pydoc_data'}
 DLL_SKIP = re.compile(r'^(_tkinter|tcl|tk)', re.I)
+
+
+def unused_library_file(file):
+    """numpy's own tests: only numpy.test() runs them."""
+    parts = Path(file).parts
+    return parts[0] == 'numpy' and 'tests' in parts
 
 
 def copy_tree(source, target, skip_dirs=frozenset()):
@@ -96,7 +103,7 @@ def build_python():
     for key, dist in sorted(needed_distributions().items()):
         for file in dist.files or []:
             source = Path(dist.locate_file(file))
-            if not source.is_file() or source.suffix == '.pyc' or '__pycache__' in source.parts:
+            if not source.is_file() or source.suffix == '.pyc' or '__pycache__' in source.parts or unused_library_file(file):
                 continue
             dest = site / file
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -146,7 +153,8 @@ def build():
 def check():
     """Start the bundled Python the way the app does and import everything the reader needs."""
     py = APP / 'python' / 'python.exe'
-    code = ('import sys, notebook_core, settings, attachments, spelling, braille, pdf_inspector, vector_graph, cv2, numpy, pdfplumber, pypdfium2; '
+    code = ('import sys, notebook_core, settings, attachments, spelling, braille, pdf_inspector, image_ops, vector_graph, numpy, pdfplumber, pypdfium2, importlib.util; '
+            'assert importlib.util.find_spec("cv2") is None, "OpenCV is in the build"; '
             'print(sys.version.split()[0], "AI" if settings.AI else "no AI", sys.prefix)')
     # No compiled cache files from this run: they would carry this computer's folder names.
     env = {'SYSTEMROOT': __import__('os').environ['SYSTEMROOT'], 'MATH_NOTEBOOK_NO_AI': '1', 'MATH_NOTEBOOK_DATA': str(DIST / 'check-data'),

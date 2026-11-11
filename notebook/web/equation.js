@@ -224,6 +224,8 @@ function toLatex(n) {
     case 'neg': return `-${toLatex(n.arg)}`;
     case 'mul': {
       const left = toLatex(n.left), right = toLatex(n.right);
+      // x = +-2: a sign in front of what follows, not something multiplied by it.
+      if (n.left.type === 'sym' && n.left.latex === '\\pm') return `\\pm ${right}`;
       // 3*x is written 3x, as in print; a number after anything needs a dot (2 \cdot 3, x \cdot 2).
       if (n.right.type === 'num' || (/\d$/.test(left) && /^\d/.test(right))) return `${left} \\cdot ${right}`;
       // x^2 dx: the thin space printed before a differential.

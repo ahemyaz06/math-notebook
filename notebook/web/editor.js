@@ -6,7 +6,8 @@ import { plainToLatex, latexToPlain, splitComment, splitDomain } from './equatio
 import { mathmlToLatex, latexToMathml } from './mathml.js';
 import { makeDocx } from './docx.js';
 import { brailleHtml } from './braille.js';
-import { makeGraph, studentGraph, HIDEABLE, parseCondition } from './graphs.js';
+import { makeGraph, studentGraph, HIDEABLE, parseCondition, compileFunction } from './graphs.js';
+import { checkLine } from './linecheck.js';
 import { texToBlocks, graphFromPgfplots, graphToPgfplots } from './tex.js';
 import { GraphMode } from './graph-mode.js';
 
@@ -86,6 +87,23 @@ export function mathSpan(latex, display = false) {
     span.classList.add('math-error');
   }
   return span;
+}
+
+// An equation is kept as its LaTeX only (data-latex) in saved files, recovery drafts and undo
+// steps: the drawn MathML is 15 to 20 times longer and is made again from the LaTeX anyway.
+function emptyEquations(root) {
+  for (const eq of root.querySelectorAll('.eq[data-latex]')) eq.replaceChildren();
+  return root;
+}
+
+// The other direction: draw every equation that was kept as LaTeX only.
+function fillEquations(root) {
+  for (const eq of root.querySelectorAll('.eq[data-latex]')) {
+    if (eq.firstChild) continue;
+    const drawn = mathSpan(eq.dataset.latex, eq.dataset.display === 'true');
+    eq.classList.toggle('math-error', drawn.classList.contains('math-error'));
+    eq.replaceChildren(...drawn.childNodes);
+  }
 }
 
 function equationLine(latex) {
@@ -289,12 +307,19 @@ function openAttachedNotebook(text, name) {
   say(`${name} was made with Math Notebook, so the document inside it was opened exactly as written, with no reading of the page.`);
 }
 
+// What a poll asks the reader for: the pages not in the document yet (from this number on) and
+// the earlier pages that still have a picture waiting. Not every finished page each time.
+function pollAddress(job, from) {
+  const waiting = new Set([...doc.querySelectorAll(`[data-figure^="${job.id}:"]`)].map((holder) => Number(holder.dataset.figure.split(':')[1])));
+  return `/api/doc/${job.id}?from=${from}&pages=${[...waiting].filter(Number.isInteger).join(',')}`;
+}
+
 async function pollImport(job) {
   if (importing !== job) return;
   if (studentView) { setTimeout(() => pollImport(job), 1500); return; }
   let data;
   try {
-    data = await api(`/api/doc/${job.id}`);
+    data = await api(pollAddress(job, job.next));
   } catch (error) {
     if (importing !== job) return;
     say(`The reader stopped answering: ${error.message}`);
@@ -342,7 +367,7 @@ async function pollPictures(job) {
   if (studentView) { setTimeout(() => pollPictures(job), 1500); return; }
   let data;
   try {
-    data = await api(`/api/doc/${job.id}`);
+    data = await api(pollAddress(job, 1000000)); // only the pages with a waiting picture
   } catch {
     return; // the places stay marked; nothing else is lost
   }
@@ -393,7 +418,7 @@ function serialize({ html } = {}) {
   }
   return JSON.stringify({
     format: 'math-notebook', version: 1, name: docName, teacher: teacherMode || undefined,
-    html: html ?? doc.innerHTML,
+    html: html ?? emptyEquations(doc.cloneNode(true)).innerHTML,
     graphs: Object.fromEntries([...graphs].filter(([id]) => used.has(id))),
   });
 }
@@ -480,7 +505,7 @@ function save(as = false) {
 
 async function saveNotebook(as) {
   if (studentView) {
-    say('Student preview. Use Teacher > Save student copy, or turn off preview to save the teacher notebook.');
+    say('Student preview. Use Tools, Teacher, Save student copy, or turn off preview to save the teacher notebook.');
     return;
   }
   if (!desktop) { say('Saving needs the desktop app.'); return; }
@@ -583,7 +608,7 @@ function draftHtml() {
     if (typeof draft.latex === 'string') open.replaceWith(mathSpan(draft.latex, openText.display));
     else open.replaceWith(document.createTextNode(draft.text));
   }
-  return { html: copy.innerHTML, caret: marker.parentNode ? marker.className : null };
+  return { html: emptyEquations(copy).innerHTML, caret: marker.parentNode ? marker.className : null };
 }
 
 function restoreDraftCaret(caret) {
@@ -650,6 +675,7 @@ function restoreUndo(from, to, word) {
   const state = from.pop();
   openText = null;
   doc.innerHTML = state.html; // our own document, as it was: already clean
+  fillEquations(doc);
   graphs.clear();
   for (const [id, g] of state.graphs) graphs.set(id, g);
   doc.focus();
@@ -826,7 +852,7 @@ async function importTex() {
     + (result.notes.length ? ` ${result.notes.length} ${result.notes.length === 1 ? 'note' : 'notes'} on what could not be read; F8 goes to them.` : ''));
 }
 
-// Graph > Copy graph as LaTeX: pgfplots code that draws the same graph in a .tex file.
+// Math > Graph > Copy graph as LaTeX: pgfplots code that draws the same graph in a .tex file.
 async function copyGraphLatex() {
   const block = currentBlock();
   const graph = block?.classList.contains('graph-line') ? graphs.get(block.dataset.graphId) : null;
@@ -1698,7 +1724,7 @@ async function nextMisspelling() {
 // ---------- stepping through an equation with the arrow keys ----------
 // As in Word, the arrow keys go into an equation: there it is its plain text, f(x) = 3 sin(x),
 // so Right and Left move one symbol at a time and typing changes it. When the cursor leaves,
-// it is an equation again, exactly as before if nothing was changed (Settings > Writing).
+// it is an equation again, exactly as before if nothing was changed (Help > Settings > Writing).
 
 let openText = null; // { span, latex, plain, display }: the equation being stepped through
 
@@ -1816,6 +1842,36 @@ function copyEquationDown() {
   line.scrollIntoView({ block: 'center' });
   setDirty(true);
   say(`Copied down: ${latexToPlain(source.dataset.latex)}. Ctrl+E changes it.`);
+}
+
+// F9: is this line the same maths as the line above it? Both are worked out at the same fixed
+// numbers (linecheck.js). The lines above, up to the nearest line of plain words or heading,
+// are one piece of work: the line just above is compared, and the ones before it give the
+// functions they name (f(x) = ...) so that f'(x) further down can be checked against them.
+function checkLineCommand() {
+  const block = currentBlock();
+  if (!block || block.classList.contains('graph-line')) { say('Move to a line with an equation first.'); return; }
+  const source = (eq) => ({ latex: eq.dataset.latex, plain: latexToPlain(eq.dataset.latex) });
+  const eq = equationAtCaret() || (block.querySelectorAll('.eq').length === 1 ? block.querySelector('.eq') : null);
+  // A line of text that starts with = carries on from the equation above ("= (x-2)(x+2)"); it
+  // cannot be an equation by itself, so it is read as it is typed. Other text is just words.
+  const typed = eq ? '' : splitComment(block.textContent).code.trim();
+  if (!eq && !typed.startsWith('=')) { say('Move to a line with an equation first.'); return; }
+  const above = [];
+  for (let b = (eq ? blockOf(eq) : block)?.previousElementSibling; b; b = b.previousElementSibling) {
+    if (isBlankLine(b)) continue;
+    const all = b.querySelectorAll('.eq');
+    if (!all.length || b.classList.contains('graph-line')) break;
+    above.unshift(source(all[all.length - 1]));
+  }
+  const previous = above.pop() || null;
+  let result;
+  try {
+    result = checkLine(eq ? source(eq) : { plain: typed, latex: null }, previous, above, { compileFunction });
+  } catch (error) {
+    result = { message: `Could not check this line: ${error.message}` };
+  }
+  say(result.message);
 }
 
 // The cursor is just after this equation (nothing but spaces between).
@@ -2423,12 +2479,12 @@ function setTeacherMode(on, quiet = false) {
   desktop?.setMenuChecked?.('teacherMode', on);
   $('tb-teacher')?.setAttribute('aria-pressed', String(on));
   showMode();
-  if (!quiet) say(on ? 'Teacher mode on. The Teacher menu marks what students will not get, and saves the student copy.' : 'Teacher mode off.');
+  if (!quiet) say(on ? 'Teacher mode on. Its commands are in Tools, Teacher.' : 'Teacher mode off.');
 }
 
 function needTeacher() {
   if (teacherMode) return true;
-  say('Turn on Teacher mode first: Teacher menu, Teacher mode.');
+  say('Turn on Teacher mode first: Tools, Teacher, Teacher mode.');
   return false;
 }
 
@@ -2596,7 +2652,7 @@ function togglePreview(force, quiet = false) {
     doc.contentEditable = 'false';
     document.body.classList.add('student-preview');
     showMode();
-    if (!quiet) say('Student preview: this is exactly what students get. It cannot be edited; Teacher > Preview student copy again returns to your document.');
+    if (!quiet) say('Student preview: this is exactly what students get. It cannot be edited; Tools, Teacher, Preview student copy again returns to your document.');
   } else {
     graphs.clear();
     for (const [id, g] of studentView.graphs) graphs.set(id, g);
@@ -2649,7 +2705,7 @@ async function exportStudentPdf() {
 const PREVIEW_SAFE = new Set(['studentPreview', 'teacherMode', 'keys', 'exploreGraph', 'readLine', 'find', 'findNext', 'findPrevious', 'wordCount',
   'nextHeading', 'previousHeading', 'headingList', 'nextNote', 'previousNote', 'saveStudentCopy', 'exportStudentDocx', 'exportStudentPdf',
   'settings', 'settingsReading', 'settingsSound', 'settingsAi', 'print', 'graphPlay', 'graphNextPoint', 'graphPreviousPoint',
-  'graphDescribe', 'graphReadPoint', 'graphStep', 'graphNextFunction', 'graphClose', 'graphSlope', 'graphLimits', 'graphSlopeSound', 'soundGuide', 'copyGraphLatex', 'convertMath', 'save', 'saveAs']);
+  'graphDescribe', 'graphReadPoint', 'graphStep', 'graphNextFunction', 'graphClose', 'graphSlope', 'graphLimits', 'graphSlopeSound', 'soundGuide', 'copyGraphLatex', 'convertMath', 'save', 'saveAs', 'checkLine']);
 
 // When a dialog closes, the document gets the focus back, unless graph mode or another
 // dialog is open (they keep it).
@@ -2760,7 +2816,7 @@ for (const dialog of document.querySelectorAll('dialog')) {
 async function showKeys(section = null) {
   if ($('keys-dialog').open) return;
   const body = $('keys-body');
-  body.replaceChildren(el('p', {}, 'H jumps to the next part, T to the next table; the arrow keys read one key at a time. Escape closes.'));
+  body.replaceChildren(el('p', {}, 'H moves to the next part and T to the next table.'));
   const table = (name, rows, id = null) => {
     const h = el('h3', id ? { id, tabindex: '-1' } : {}, name);
     const t = el('table');
@@ -2771,12 +2827,13 @@ async function showKeys(section = null) {
     body.append(h, t);
   };
   const extra = [
-    ['Most used', [['All keys (this page)', 'F1'], ['The menus', 'Alt'], ['Between the toolbar and the document', 'F6'],
+    ['Most used', [['All keys (this page)', 'F1'], ['The menus', 'Alt'], ['Settings', 'Ctrl+comma'], ['Between the toolbar and the document', 'F6'],
       ['Save', 'Ctrl+S'], ['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Y or Ctrl+Shift+Z'], ['Export as a Word document', 'Ctrl+Shift+W'], ['Import a PDF', 'Ctrl+Shift+I'],
       ['Read the line with its maths spelled out', 'Ctrl+Shift+R'], ['Find', 'Ctrl+F'], ['Headings list', 'Ctrl+Shift+H']]],
     ['Equations', [['Make the line (or selection) an equation', 'Ctrl+Shift+E'], ['Insert an equation', 'Alt+='],
       ['Edit the equation', 'Ctrl+E, or Enter before it'], ['New line after an equation', 'Enter after it'],
       ['Copy the equation above down, to change it', 'Shift+Enter or F11'],
+      ['Check this line against the line above', 'F9'],
       ['Move through an equation one symbol at a time', 'Right and Left arrows into it'],
       ['Equation back to plain text', 'Ctrl+T or Ctrl+Shift+T'], ['Equation to LaTeX text', 'Ctrl+L'],
       ['Plain text, LaTeX and MathML', 'Ctrl+Shift+M'],
@@ -2812,7 +2869,7 @@ async function showKeys(section = null) {
 // Closing it goes back where you were: graph mode, or the document.
 $('keys-dialog').addEventListener('close', () => { if (!$('graph-mode').hidden) $('graph-mode').focus(); else backToDocument(); });
 
-// ---------- graph mode from the Graph menu ----------
+// ---------- graph mode from Math > Graph ----------
 
 function graphCommand(name) {
   if ($('graph-mode').hidden) { say('Open a graph first: on a graph line or an equation, press Ctrl+G.'); return; }
@@ -2984,7 +3041,7 @@ async function pastePlain() {
   setDirty(true);
 }
 
-// ---------- settings (Settings menu) ----------
+// ---------- settings (Help > Settings) ----------
 
 let settingsReturn = null;
 let savedSettings = null;
@@ -3022,12 +3079,35 @@ function fillSettings({ values, models }) {
   showAiChoices();
 }
 
-// Each part of Settings is its own small dialog: Reading PDFs, AI add-on, Graph sound.
-const SETTINGS_PARTS = { reading: 'Reading PDFs', ai: 'AI add-on', writing: 'Writing', sound: 'Graph sound' };
-async function openSettings(section) {
-  if (!SETTINGS_PARTS[section]) section = 'reading';
-  for (const part of Object.keys(SETTINGS_PARTS)) $(`settings-${part}`).hidden = part !== section;
-  $('settings-title').textContent = `Settings: ${SETTINGS_PARTS[section]}`;
+// Settings is one window with four tabs. Left and Right on a tab change tab, Tab goes into
+// it, and Ctrl+Tab or Ctrl+Shift+Tab change tab from anywhere, as in Windows' own settings boxes.
+const SETTINGS_TABS = ['reading', 'writing', 'sound', 'ai'];
+let settingsTab = 'reading';
+function showSettingsTab(name, focus = false) {
+  settingsTab = SETTINGS_TABS.includes(name) ? name : 'reading';
+  for (const tab of SETTINGS_TABS) {
+    const on = tab === settingsTab;
+    $(`settings-tab-${tab}`).setAttribute('aria-selected', String(on));
+    $(`settings-tab-${tab}`).tabIndex = on ? 0 : -1;
+    $(`settings-${tab}`).hidden = !on;
+  }
+  if (focus) $(`settings-tab-${settingsTab}`).focus();
+}
+const nextSettingsTab = (step) => SETTINGS_TABS[(SETTINGS_TABS.indexOf(settingsTab) + step + SETTINGS_TABS.length) % SETTINGS_TABS.length];
+$('settings-tabs').addEventListener('click', (e) => { const tab = e.target.closest('[role="tab"]'); if (tab) showSettingsTab(tab.id.replace('settings-tab-', ''), true); });
+$('settings-tabs').addEventListener('keydown', (e) => {
+  const to = { ArrowRight: nextSettingsTab(1), ArrowLeft: nextSettingsTab(-1), Home: SETTINGS_TABS[0], End: SETTINGS_TABS.at(-1) }[e.key];
+  if (to && !e.ctrlKey && !e.altKey) { e.preventDefault(); showSettingsTab(to, true); }
+});
+$('settings-dialog').addEventListener('keydown', (e) => {
+  const forward = e.ctrlKey && (e.key === 'PageDown' || (e.key === 'Tab' && !e.shiftKey));
+  const back = e.ctrlKey && (e.key === 'PageUp' || (e.key === 'Tab' && e.shiftKey));
+  if (forward || back) { e.preventDefault(); showSettingsTab(nextSettingsTab(forward ? 1 : -1), true); }
+});
+
+// section: the tab to show. intoTab: start on the tab's first setting instead of on the tab itself.
+async function openSettings(section = 'reading', intoTab = false) {
+  showSettingsTab(section);
   settingsReturn = document.activeElement;
   try {
     fillSettings(await loadSettings());
@@ -3038,8 +3118,8 @@ async function openSettings(section) {
   $('settings-error').textContent = '';
   $('settings-dialog').showModal();
   const installed = savedSettings.ai_installed !== false;
-  const first = { sound: 'set-sound_profile', writing: 'set-step_into_equations', ai: installed ? 'set-use_ai' : null, reading: installed && $('set-use_ai').checked ? 'set-reading_method' : 'set-pages_at_once' }[section];
-  (first ? $(first) : $('settings-save')).focus();
+  const first = { sound: 'set-sound_profile', writing: 'set-step_into_equations', ai: installed ? 'set-use_ai' : null, reading: installed && $('set-use_ai').checked ? 'set-reading_method' : 'set-pages_at_once' }[settingsTab];
+  (intoTab && first ? $(first) : $(`settings-tab-${settingsTab}`)).focus();
 }
 
 function settingsFromForm() {
@@ -3089,7 +3169,7 @@ $('sound-listen').addEventListener('click', () => say(graphMode.preview(settings
 $('set-stereo_width').addEventListener('change', () => graphMode.previewStereo(settingsFromForm()));
 $('settings-dialog').addEventListener('close', () => { (settingsReturn && document.contains(settingsReturn) ? settingsReturn : doc).focus(); });
 
-// ---------- the sound guide (Help > Sound guide, or Settings > Graph sound) ----------
+// ---------- the sound guide (Help > Sound guide, or Help > Settings > Graph sound) ----------
 
 // [name, what it is, what you hear]. The names are graph-mode.js guide()'s.
 function guideSounds(dots) {
@@ -3243,7 +3323,7 @@ doc.addEventListener('keydown', (e) => {
     say('New line after the graph.');
     return;
   }
-  // Right and Left go into an equation, one symbol at a time (Settings > Writing).
+  // Right and Left go into an equation, one symbol at a time (Help > Settings > Writing).
   if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && plainKey && !openText && savedSettings?.values?.step_into_equations !== false) {
     const eq = equationNextTo(e.key === 'ArrowRight');
     if (eq) { e.preventDefault(); stepIntoEquation(eq, e.key === 'ArrowLeft'); return; }
@@ -3426,13 +3506,14 @@ const COMMANDS = {
   graphNextFunction: () => graphCommand('function'),
   graphClose: () => graphCommand('close'),
   copyEquationDown,
+  checkLine: checkLineCommand,
   undo,
   redo,
   interval: openInterval,
   spelling: startSpelling,
   nextMisspelling,
   soundGuide: () => openSoundGuide(),
-  settingsWriting: () => openSettings('writing'),
+  settingsWriting: () => openSettings('writing', true),
   graphSlope: () => graphCommand('slope'),
   graphLimits: () => graphCommand('limits'),
   graphSlopeSound: () => graphCommand('slopeSound'),
@@ -3462,9 +3543,9 @@ const COMMANDS = {
   clearNote: clearWarning,
   keys: () => { if (!showDialogHelp()) showKeys(); }, // F1 in a dialog is that dialog's help
   settings: () => openSettings('reading'),
-  settingsReading: () => openSettings('reading'),
-  settingsAi: () => openSettings('ai'),
-  settingsSound: () => openSettings('sound'),
+  settingsReading: () => openSettings('reading', true),
+  settingsAi: () => openSettings('ai', true),
+  settingsSound: () => openSettings('sound', true),
   settingsReset: () => resetSettings(true),
 };
 
@@ -3475,13 +3556,13 @@ const DOCUMENT_KEYS = {
   'Ctrl+Alt+0': 'normalText', 'Ctrl+Shift+E': 'toEquation', 'Ctrl+E': 'editEquation', 'Alt+=': 'insertEquation', 'Ctrl+F': 'find',
   'Ctrl+H': 'replace', F3: 'findNext', 'Shift+F3': 'findPrevious', 'Ctrl+Shift+M': 'convertMath', 'Ctrl+Shift+W': 'exportDocx',
   F1: 'keys', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'insertGraph', 'Ctrl+F9': 'hideWords', 'Ctrl+Shift+F9': 'hideLine', 'Ctrl+Shift+V': 'pastePlain', F11: 'copyEquationDown', 'Ctrl+T': 'toPlainText', 'Ctrl+Shift+T': 'toPlainText', 'Ctrl+L': 'toLatexText', 'Ctrl+PageDown': 'nextHeading', 'Ctrl+PageUp': 'previousHeading', 'Ctrl+Shift+H': 'headingList',
-  'Ctrl+Shift+D': 'interval', F7: 'spelling', 'Alt+F7': 'nextMisspelling', 'Ctrl+Z': 'undo', 'Ctrl+Y': 'redo', 'Ctrl+Shift+Z': 'redo',
+  'Ctrl+Shift+D': 'interval', F7: 'spelling', 'Alt+F7': 'nextMisspelling', 'Ctrl+Z': 'undo', 'Ctrl+Y': 'redo', 'Ctrl+Shift+Z': 'redo', F9: 'checkLine',
 };
 
 // Without the desktop menu bar (tests in a plain browser), the menu's other shortcuts work here too.
 const FALLBACK_KEYS = {
   'Alt+=': 'insertEquation', 'Ctrl+E': 'editEquation', 'Ctrl+Shift+E': 'toEquation', 'Ctrl+Shift+T': 'toPlainText', 'Ctrl+T': 'toPlainText', 'Ctrl+L': 'toLatexText',
-  'Ctrl+Shift+R': 'readLine', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'insertGraph', F8: 'nextNote', 'Shift+F8': 'previousNote',
+  'Ctrl+Shift+R': 'readLine', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'insertGraph', F8: 'nextNote', 'Shift+F8': 'previousNote', F9: 'checkLine',
   'Ctrl+Alt+1': 'heading1', 'Ctrl+Alt+2': 'heading2', 'Ctrl+Alt+3': 'heading3', 'Ctrl+Alt+0': 'normalText', F1: 'keys', 'Ctrl+,': 'settings',
   'Ctrl+B': 'bold', 'Ctrl+I': 'italic', 'Ctrl+U': 'underline', 'Ctrl+Shift+L': 'bulletList', 'Ctrl+Shift+&': 'numberedList', 'Ctrl+Shift+7': 'numberedList',
   'Ctrl+Enter': 'pageBreak', 'Ctrl+F': 'find', 'Ctrl+H': 'replace', F3: 'findNext', 'Shift+F3': 'findPrevious', 'Ctrl+Shift+M': 'convertMath',
@@ -3494,7 +3575,7 @@ function run(name) {
   // While a dialog is open its own keys win: Ctrl+Enter there is the dialog's, not a page
   // break, and Ctrl+B in the Find box must not make the document bold.
   if (command && document.querySelector('dialog[open]') && name !== 'keys') return;
-  if (command && studentView && !PREVIEW_SAFE.has(name)) { say('This is the student preview. To change the document, turn the preview off: Teacher menu, Preview student copy.'); return; }
+  if (command && studentView && !PREVIEW_SAFE.has(name)) { say('This is the student preview. To change the document, turn the preview off: Tools, Teacher, Preview student copy.'); return; }
   if (command) command();
 }
 window.runCommand = run; // used by the desktop bridge and by tests
@@ -3531,7 +3612,7 @@ document.addEventListener('selectionchange', () => {
 });
 
 // In focus mode NVDA reads only the start of an equation (MathCAT reads it in browse mode), so
-// when the cursor comes to an equation, it is said once as plain text. Settings > Writing can
+// when the cursor comes to an equation, it is said once as plain text. Help > Settings > Writing can
 // turn this off.
 let announcedEquation = null;
 let announceTimer = null;
@@ -3560,5 +3641,4 @@ doc.append(first);
 setDirty(false);
 doc.focus();
 placeCaretIn(first); // typing goes into the first paragraph, not loose in the document
-say('Math Notebook. Alt opens the menus; F1 lists the keys.');
 showRecovery(true);

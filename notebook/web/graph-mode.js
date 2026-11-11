@@ -128,7 +128,7 @@ export class GraphMode {
     root.addEventListener('blur', () => this.pause(false));
   }
 
-  // Settings > Graph sound.
+  // Help > Settings > Graph sound.
   applySettings(s) {
     this.settings = { sound_profile: 'gentle', bass_mode: 'x-and-y', step: 0.5, play_speed_ms: 400, cues: true,
       volume: 0.25, bass_volume: 0.35, free_move_tones: true, dot_sounds: 'new', graph_numbers: 'half', pitch_glide: true, slope_sound: false, stereo_width: 'original', ...this.settings, ...s };
@@ -146,7 +146,7 @@ export class GraphMode {
     setNumberStyle(v.graph_numbers);
   }
 
-  // Settings > Graph sound: hear a sound before saving it. The example climbs from 0 to 3,
+  // Help > Settings > Graph sound: hear a sound before saving it. The example climbs from 0 to 3,
   // falls to minus 2 and comes back to 0, from left to right; then a solid dot and an open dot.
   // short: just a climb and a fall, when moving through the choices.
   previewEngineFor(values) {
@@ -214,7 +214,7 @@ export class GraphMode {
     }
   }
 
-  // Settings > Graph sound > Stereo: one note walking from the left edge to the right edge of a
+  // Help > Settings > Graph sound > Stereo: one note walking from the left edge to the right edge of a
   // graph from minus 10 to 10, with the bass line under it.
   previewStereo(values) {
     const e = this.previewEngineFor(values);
@@ -507,7 +507,7 @@ export class GraphMode {
     return parts.join(' ').trim() || 'No description.';
   }
 
-  // The same actions from the Graph menu (for mouse users, and to find them by name).
+  // The same actions from Math > Graph (for mouse users, and to find them by name).
   command(name) {
     const keys = { play: ' ', next: '.', previous: ',', describe: 'i', read: 'v', step: 'f', function: 'Tab', close: 'Escape', slope: 's', limits: 'l', slopeSound: 'd' };
     this.root.focus();

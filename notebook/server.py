@@ -92,7 +92,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts[:1] == ['api']:
                 if self.headers.get('Sec-Fetch-Site') not in (None, 'none', 'same-origin'):
                     return self._error(403, 'Not allowed.')
-                return self._api_get(parts[1:])
+                return self._api_get(parts[1:], urllib.parse.parse_qs(url.query))
             return self._static(url.path)
         except (ValueError, FileNotFoundError) as exc:
             return self._error(404, str(exc) or 'Not found.')
@@ -110,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
             kind += '; charset=utf-8'
         self._send(200, target.read_bytes(), kind)
 
-    def _api_get(self, parts):
+    def _api_get(self, parts, query=None):
         if parts == ['settings']:
             return self._send(200, settings_payload())
         if parts == ['library']:
@@ -125,6 +125,13 @@ class Handler(BaseHTTPRequestHandler):
             # While reading, an old cached page may be waiting to be checked again.
             # An idle document can still serve its cached pictures after a restart.
             numbers = range(1, meta['pages'] + 1) if status['state'] == 'idle' else sorted(status['done'])
+            if query and 'from' in query:
+                # The editor asks only for what it does not have yet: pages from this number on,
+                # and the earlier pages that still have a picture waiting (?from=5&pages=2,3).
+                # Without this, every poll sent every finished page again.
+                start = int(query['from'][0])
+                waiting = {int(n) for n in ','.join(query.get('pages', [])).split(',') if n.isdigit()}
+                numbers = [n for n in numbers if n >= start or n in waiting]
             pages = [core.load_page(doc_id, n) for n in numbers]
             return self._send(200, {'meta': meta, 'status': status,
                                     'pages': [p for p in pages if p]})
@@ -133,6 +140,8 @@ class Handler(BaseHTTPRequestHandler):
             if not (name.endswith('.png') and '/' not in name and '\\' not in name and '..' not in name):
                 raise FileNotFoundError('Not found.')
             target = core.document_dir(parts[1]) / 'pages' / name
+            if name[:-4].isdigit() and name[:-4].isascii():
+                target = core.page_image(parts[1], int(name[:-4]))  # a page's picture is drawn when first asked for
             return self._send(200, target.read_bytes(), 'image/png')
         raise FileNotFoundError('Not found.')
 

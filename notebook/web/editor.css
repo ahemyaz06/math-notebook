@@ -37,8 +37,11 @@ dialog label { display: block; margin: .5rem 0 .25rem; }
 dialog input, dialog textarea { width: 100%; padding: .4rem; font-family: Consolas, "Cascadia Mono", monospace; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
 .hint { color: var(--muted); font-size: .9rem; }
 #settings-dialog { max-height: 90vh; overflow-y: auto; }
-#settings-dialog fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 1rem; padding: .5rem 1rem 1rem; }
-#settings-dialog legend { font-weight: 600; padding: 0 .3rem; }
+#settings-tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--line); margin-bottom: .75rem; }
+#settings-tabs [role="tab"] { padding: .4rem .8rem; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; cursor: pointer; }
+#settings-tabs [role="tab"][aria-selected="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+#settings-tabs [role="tab"]:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+#settings-dialog .settings-panel { margin: 0 0 1rem; min-height: 12rem; }
 #settings-dialog select { width: 100%; padding: .35rem; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
 #settings-dialog input[type="checkbox"] { width: auto; margin-right: .5rem; }
 #settings-dialog .buttons { display: flex; gap: .5rem; flex-wrap: wrap; }

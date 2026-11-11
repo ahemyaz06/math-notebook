@@ -50,7 +50,7 @@ OutputBaseFilename=Math-Notebook-Setup
 
 [Messages]
 WelcomeLabel1=Install Math Notebook {#AppVersion}
-WelcomeLabel2=This is a beta version. Math Notebook is still being built and is updated often, so things may change, and some parts are not finished or not fully tested yet. Newer versions are on the project's GitHub Releases page.%n%nThis puts Math Notebook on this computer, with a Start menu shortcut and an uninstaller in Windows' Installed apps.%n%nPDFs are read locally without AI. Help > Open the user guide explains update checks, optional PDF equation checking with Tectonic, and braille export with BrailleBlaster.%n%nYour settings and imported PDFs are kept in your AppData folder, so a newer version keeps them.%n%nIt is not code-signed, so a Windows warning before this window is expected.
+WelcomeLabel2=This is a beta version. Math Notebook is still being built and is updated often, so things may change, and some parts are not finished or not fully tested yet. Newer versions are on the project's GitHub Releases page.%n%nThis puts Math Notebook on this computer, with a Start menu shortcut and an uninstaller in Windows' Installed apps.%n%nPDFs are read locally without AI. Help > User guide explains update checks, optional PDF equation checking with Tectonic, and braille export with BrailleBlaster.%n%nYour settings and imported PDFs are kept in your AppData folder, so a newer version keeps them.%n%nIt is not code-signed, so a Windows warning before this window is expected.
 FinishedLabel=Math Notebook is installed. Find it in the Start menu under Math Notebook.
 
 [Tasks]

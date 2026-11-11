@@ -5,6 +5,7 @@ Uses Recognition Lab's Python environment, model files and AI server launcher.
 Everything runs on this computer; documents are never uploaded anywhere.
 """
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from pathlib import Path
 import hashlib
 import json
@@ -31,7 +32,7 @@ DATA_DIR = Path(os.environ.get('MATH_NOTEBOOK_DATA') or
 
 
 def models():
-    """The reading model, then the optional second model (Settings > Reading PDFs). The
+    """The reading model, then the optional second model (Help > Settings > Reading PDFs). The
     second re-reads only pages where the checker found differences and the closer copy
     is kept; it is off by default because swapping models makes reading slower."""
     s = app_settings.load()
@@ -487,15 +488,25 @@ def _read_figure(figure, found, on_stage, model=None):
     return figure
 
 
-def text_reader_can_read(source, index, pdf_text, math_fonts, found):
+@contextlib.contextmanager
+def _text_page(source, number, page=None):
+    """The page (1-based) opened with pdfplumber. Parsing a page is the slow part of reading
+    it, so a caller that already has the page open passes it on and it is parsed only once."""
+    if page is not None:
+        yield page
+        return
+    import pdfplumber
+    with pdfplumber.open(str(source), pages=[number]) as pdf:
+        yield pdf.pages[0]
+
+
+def text_reader_can_read(source, index, pdf_text, math_fonts, found, page=None):
     """(True, None) when the page's own text holds its maths; otherwise (False, reason)."""
     if not checker.strip_page_numbers(pdf_text or '').strip():
         return False, 'no text'  # a scan or a picture of a page
     if math_fonts:
         return True, None
-    import pdfplumber
-    with pdfplumber.open(str(source), pages=[index + 1]) as pdf:
-        page = pdf.pages[0]
+    with _text_page(source, index + 1, page) as page:
         shapes = [c for c in page.curves if c['bottom'] - c['top'] < 14 and c['x1'] - c['x0'] < 40
                   and not any(_contains(f['bbox'], [c['x0'], c['top'], c['x1'], c['bottom']]) for f in found)]
     if len(shapes) >= DRAWN_MATH_SHAPES:
@@ -566,13 +577,11 @@ def _drawing_box(page, bbox):
     return box if box[2] - box[0] >= 30 and box[3] - box[1] >= 30 else None
 
 
-def read_by_text(source, number, found, pdf_text, math_fonts):
+def read_by_text(source, number, found, pdf_text, math_fonts, page=None):
     """The page rebuilt from the PDF's own characters (pdf_text_reader), no AI. Pictures get
     their place marked and wait in the picture queue; exactly read graphs are filled in now."""
-    import pdfplumber
     started = time.perf_counter()
-    with pdfplumber.open(str(source), pages=[number]) as pdf:
-        page = pdf.pages[0]
+    with _text_page(source, number, page) as page:
         keep = []
         # A drawing in a box full of text was dropped as text, and its labels came out as
         # one-letter equations. When the AI describes pictures it is kept, cut to the drawing;
@@ -663,12 +672,43 @@ def process_page(doc_id, number, on_stage=None, model=None, save=True, method=No
         try:
             # Tick labels inside exactly-read graphs are checked by the graph reader instead.
             pdf_text = native_text(pdf, index, [f['exact']['text_box'] for f in found if f['exact']])
-            image = folder / 'pages' / f'{number}.png'
-            render_page(pdf, index, image)
         finally:
             pdf.close()
-        math_fonts = page_has_math_fonts(folder / 'source.pdf', index)
-    if is_blank_page(pdf_text, found, image):
+    # The page's characters and shapes are parsed once here and shared by the steps below
+    # (its fonts, whether the text reader can read it, the reading itself).
+    with contextlib.ExitStack() as opened:
+        try:
+            text_page = opened.enter_context(_text_page(folder / 'source.pdf', number))
+        except Exception:
+            text_page = None  # each step then opens the PDF itself and reports its own error
+        return _process_open_page(doc_id, number, on_stage, model, save, method, found, pdf_text, text_page)
+
+
+def page_image(doc_id, number, fresh=False):
+    """The picture of a page, drawn when it is first needed: the AI reads it, the blank-page
+    test measures its ink, and the web page shows it. Reading by text never needs it."""
+    image = document_dir(doc_id) / 'pages' / f'{number}.png'
+    if fresh or not image.exists():
+        if not (document_dir(doc_id) / 'source.pdf').is_file():
+            raise FileNotFoundError('Not found.')
+        with PDF_LOCK:
+            pdf = pdfium.PdfDocument(str(document_dir(doc_id) / 'source.pdf'))
+            try:
+                if not 1 <= number <= len(pdf):
+                    raise FileNotFoundError('Not found.')
+                render_page(pdf, number - 1, image)
+            finally:
+                pdf.close()
+    return image
+
+
+def _process_open_page(doc_id, number, on_stage, model, save, method, found, pdf_text, text_page):
+    folder = document_dir(doc_id)
+    index = number - 1
+    math_fonts = page_has_math_fonts(folder / 'source.pdf', index, text_page)
+    # Only a page with no text and no pictures can be blank; only then is its picture drawn.
+    maybe_blank = not found and not checker.strip_page_numbers(pdf_text or '').strip()
+    if maybe_blank and is_blank_page(pdf_text, found, page_image(doc_id, number, fresh=True)):
         # Asked about a blank page, the model invents mathematics (seen on a real page),
         # and with no text in the PDF the checker cannot catch it. Skip the AI.
         record = {'page': number, 'markdown': 'This page is blank.', 'pdf_text': pdf_text, 'figures': [],
@@ -682,9 +722,9 @@ def process_page(doc_id, number, on_stage=None, model=None, save=True, method=No
     if method != 'ai':
         if on_stage:
             on_stage('reading')
-        usable, ai_reason = text_reader_can_read(folder / 'source.pdf', index, pdf_text, math_fonts, found)
+        usable, ai_reason = text_reader_can_read(folder / 'source.pdf', index, pdf_text, math_fonts, found, text_page)
         if usable:
-            record = read_by_text(folder / 'source.pdf', number, found, pdf_text, math_fonts)
+            record = read_by_text(folder / 'source.pdf', number, found, pdf_text, math_fonts, text_page)
             if save:
                 save_page(doc_id, record)
             return record
@@ -704,7 +744,7 @@ def process_page(doc_id, number, on_stage=None, model=None, save=True, method=No
     _start_figure_work(found, model)
     if on_stage:
         on_stage('reading')
-    markdown, seconds = transcribe(image, model)
+    markdown, seconds = transcribe(page_image(doc_id, number, fresh=True), model)
     markdown = drop_page_number(markdown, pdf_text)
     check = check_page(pdf_text, markdown, math_fonts)
 
@@ -772,13 +812,12 @@ def second_opinion(doc_id, number, on_stage=None):
     return winner
 
 
-def page_has_math_fonts(pdf_path, index):
+def page_has_math_fonts(pdf_path, index, page=None):
     """Whether the page's text uses a maths font; None if the fonts cannot be read.
     Without one (OpenStax books draw formulas as shapes) the checker sees no maths."""
     try:
-        import pdfplumber
-        with pdfplumber.open(str(pdf_path), pages=[index + 1]) as pdf:
-            return checker.has_math_fonts({c.get('fontname') for c in pdf.pages[0].chars})
+        with _text_page(pdf_path, index + 1, page) as page:
+            return checker.has_math_fonts({c.get('fontname') for c in page.chars})
     except Exception:
         return None
 

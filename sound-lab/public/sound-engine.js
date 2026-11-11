@@ -8,7 +8,7 @@
 
 import { playVoice, VOICES } from './voices.js';
 
-// Wider stereo (Settings > Graph sound > Stereo). How far a window's edge reaches grows with the
+// Wider stereo (Help > Settings > Graph sound > Stereo). How far a window's edge reaches grows with the
 // window: an edge at 1 (or nearer) is half way to that side, at 3 about 70%, at 10 or further 90%,
 // never all the way, so the far ear always hears a little. Inside, a curve: steps near the middle
 // move further than the same steps near the edge (x at 3 of 10 is 44% to the side, not 30%).

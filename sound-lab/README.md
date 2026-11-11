@@ -16,14 +16,14 @@ browser. Tab to the Stereo Sound Pad. Press **S** for settings and **?** for the
   so going up is a short rise and going down a short fall.
 - **Sounds to choose from:** calm sounds, instruments (piano, guitar, harp, marimba, kalimba,
   vibraphone, flute, cello), beeps and game sounds. Every one uses the same pitch for the same
-  height. In Math Notebook, Settings > Graph sound plays each one as you move through the list.
+  height. In Math Notebook, Help > Settings > Graph sound plays each one as you move through the list.
 - **The bass line:** while playing (Space), a soft low line follows the curve, so the steps
   feel connected.
 - **Points of interest:** a chime at the origin, a tick where the curve crosses an axis, a swell
   at peaks and valleys, a low knock where there is no curve (an asymptote).
 - **Dots and corners:** a small bump for a solid dot, a breath of wind for an open dot (a hole),
   and a slide through a sharp corner (down then up for a valley, up then down for a peak).
-  In Math Notebook, Settings > Graph sound > Dots and corners can switch back to the original
+  In Math Notebook, Help > Settings > Graph sound > Dots and corners can switch back to the original
   dot sounds.
 
 The app estimates points of interest by sampling the curve. It can miss details on a narrow

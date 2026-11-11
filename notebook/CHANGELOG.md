@@ -2,6 +2,51 @@
 
 Earlier versions are described on the [releases page](https://github.com/ahemyaz06/math-notebook/releases).
 
+## 0.7.9 (beta)
+
+### Checking a line of work
+
+- F9 (Math > Check this line against the line above) says whether an equation is still the
+  same maths as the equation above it, and if not, a number where they differ. Expressions and
+  `y = ...` lines are compared by value; equations to solve by their solutions (a lost or an
+  added solution is named); inequalities by which numbers make them true; `f'(x) = ...` and
+  `dy/dx = ...` by the measured slope of the function above; limits and definite integrals by
+  working them out; an integral with no limits by the slope of its answer.
+- The numbers are a fixed list, not random, so the answer is the same every time. With an
+  interval on the line they are taken inside it. Only numbers where both lines have a value
+  count, and a value that one line has and the other lacks is said.
+- It is rules, not AI, and never gives the answer. What it cannot tell it says ("Could not
+  check"); it does not guess. Tested on about 140 written steps, 60 of them true statements
+  chosen to be hard: none was called wrong, two could not be checked.
+
+### Menus, toolbar and Settings
+
+- Seven menus instead of eleven: File, Edit, Insert, Format, Math, Tools, Help. Tables are in
+  Insert > Table, graphs in Math > Graph, spelling, word count and Teacher in Tools, the
+  exports in File > Export, and headings and review notes in Edit > Go to. Every key is the
+  same as before.
+- Settings is one window with four tabs (Reading PDFs, Writing, Graph sound, AI add-on), in
+  Help > Settings (Ctrl+comma). Left and Right change tab; Ctrl+Tab does from anywhere.
+- The toolbar is smaller: paragraph style, bold, italic, underline, lists, Equation, Graph and
+  Check line.
+- Nothing is said when the app starts; the keyboard shortcuts page is still F1.
+- The new menus, the Settings tabs and the line check were tried with NVDA.
+
+### Speed and file size
+
+- Importing a PDF parses each page once instead of several times, draws a page's picture only
+  when something needs it, and the editor asks only for the pages it does not have yet.
+- Equations are saved as their LaTeX only, in notebooks, recovery drafts and undo steps; the
+  drawn form is made again on opening. Older notebooks open as before, and 0.7.8 opens new ones.
+- The part that finds pictures and graphs on a PDF page no longer needs OpenCV. Its few image
+  steps are done with NumPy and give the same results (compared on thousands of test images),
+  so the download is smaller.
+
+### Fixed
+
+- `x = +-2` was written with a dot after the plus-or-minus sign. It is now a plain sign in
+  front of the 2, also before a root or a letter.
+
 ## 0.7.8 (beta)
 
 Changes since 0.7.6. Version 0.7.7 was never published; its changes are listed here.
