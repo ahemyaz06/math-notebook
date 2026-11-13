@@ -687,6 +687,58 @@ export function shapeMarks(graph, boundary, known = []) {
   return out;
 }
 
+// ---------- the derivative of a function, as a curve ----------
+
+// f' (order 1) or f'' (order 2) of a compiled function, calculated from the curve's own
+// heights close on each side of x (the way the slope at a point is measured), so it follows
+// the function when its numbers change. There is no formula for it. It has no value where
+// the function has a corner, a jump, a hole, an asymptote or an end; a corner shows as a jump
+// with two open dots.
+export function derivativeFunction(f, order, boundary, label) {
+  const source = f.graph;
+  const y = (x) => { const l = source.limitAt(x); return l.defined ? l.y : NaN; };
+  const BREAKS = ['corner', 'jump', 'asymptote', 'open-point', 'endpoint'];
+  const breaks = [...landmarksOf(source, boundary).filter((l) => BREAKS.includes(l.kind)).map((l) => l.x), ...(f.dots || []).map((d) => d.coordinate[0])];
+  // The second derivative also breaks where the first has a corner (x|x| at 0).
+  if (order === 2) breaks.push(...landmarksOf(derivativeFunction(f, 1, boundary, '').graph, boundary).filter((l) => l.kind === 'corner').map((l) => l.x));
+  const base = order === 1 ? 1e-5 : 1e-3, digits = order === 1 ? 8 : 5;
+  const value = (x) => {
+    // Never across a break: close to one, the two heights are taken closer in.
+    const near = Math.min(...breaks.map((b) => Math.abs(b - x)), Infinity);
+    if (near < 1e-9) return NaN;
+    const h = Math.min(base * Math.max(1, Math.abs(x)), near / 2);
+    if (!source.isContinuousBetween(x - h, x + h)) return NaN;
+    const v = order === 1 ? (y(x + h) - y(x - h)) / (2 * h) : (y(x + h) - 2 * y(x) + y(x - h)) / (h * h);
+    return Number.isFinite(v) ? Number(v.toFixed(digits)) || 0 : NaN;
+  };
+  // Each side of a break, a little away from it.
+  const sides = (b) => [value(b - 1e-4), value(b + 1e-4)];
+  const settled = (v) => Number.isFinite(v) && Math.abs(v) < 1e6;
+  const graph = {
+    type: 'function', label, hasSteps: false, domainChecks: [],
+    yAt: value,
+    limitAt(x) {
+      const v = value(x);
+      if (Number.isFinite(v)) return { defined: true, y: v };
+      const b = breaks.find((o) => Math.abs(o - x) < 1e-9);
+      if (b === undefined) return { defined: false, hole: false, y: NaN };
+      const [l, r] = sides(b);
+      const hole = settled(l) && settled(r) && Math.abs(l - r) < 1e-2 * (1 + Math.abs(l));
+      return { defined: false, hole, y: hole ? Number(((l + r) / 2).toFixed(2)) : NaN };
+    },
+    isContinuousBetween: (a, b) => source.isContinuousBetween(a, b) && !breaks.some((o) => o >= Math.min(a, b) - 1e-9 && o <= Math.max(a, b) + 1e-9),
+  };
+  // A jump's two open dots, where both sides settle at different heights.
+  const dots = [];
+  for (const b of [...new Set(breaks.map((o) => Number(o.toFixed(9))))].sort((a, c) => a - c)) {
+    if (Math.abs(b) > boundary) continue;
+    const [l, r] = sides(b).map((v) => (settled(v) ? Number(v.toFixed(2)) : null));
+    if (l === null || r === null || Math.abs(l - r) < 1e-2 * (1 + Math.abs(l))) continue;
+    for (const v of [l, r]) dots.push({ kind: 'open dot', coordinate: [b, v], label: `jump at x = ${say(b)}: open dot at ${say(b)}, ${say(v)}` });
+  }
+  return { graph, label, latex: '', dots, notes: [], domain: f.domain || null, rows: [] };
+}
+
 // ---------- describing a graph in words ----------
 
 // What a teacher can keep from students, and the points of interest each one covers.
@@ -767,6 +819,8 @@ function studentCopy(graph) {
     points: hide.includes('holes') ? [] : (graph.points || []).map(({ label, ...p }) => (opts.hideFormula ? p : { label, ...p })),
     curves: (graph.curves || []).map((c) => ({ ...c })), // read from a PDF: already only points
   };
+  if (graph.drawing) out.drawing = graph.drawing; // drawn by hand: only points too
+  if (graph.drawings) out.drawings = graph.drawings;
   if (!opts.hideFormula) {
     if (graph.functions) out.functions = graph.functions;
     if (graph.equations) out.equations = graph.equations;

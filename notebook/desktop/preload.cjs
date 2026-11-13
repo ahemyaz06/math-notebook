@@ -21,4 +21,8 @@ contextBridge.exposeInMainWorld('notebook', {
   setTitle: (title) => ipcRenderer.send('set-title', title),
   getMenu: () => ipcRenderer.invoke('get-menu'),
   setMenuChecked: (id, checked) => ipcRenderer.send('set-menu-checked', id, checked),
+  // The user guide window: the guide or the changelog as text, and Escape to close it.
+  readGuide: (name) => ipcRenderer.invoke('guide-read', name),
+  closeGuide: () => ipcRenderer.send('guide-close'),
+  onGuideShow: (handler) => ipcRenderer.on('guide-show', (_event, name, hash) => handler(name, hash)),
 });

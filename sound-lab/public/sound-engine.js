@@ -23,6 +23,13 @@ export function widerPan(x, xRange, boundary) {
   return left ? -pan : pan;
 }
 
+// The 'fitted' design (one voice, one scale for each graph). The lowest note is the bottom of the
+// graph's window and the highest its top, three octaves apart, with a straight line between: the
+// same rise is the same musical step everywhere on the graph, whether y runs to 1 or to 200.
+export const FIT_LOW = 150; // Hz, the bottom of the window
+export const FIT_OCTAVES = 3; // the top of the window is 1200 Hz
+const FIT_MIDDLE = FIT_LOW * Math.pow(2, FIT_OCTAVES / 2); // the slope note for a flat curve
+
 export const CLASSIC_PROFILES = ['gentle', 'warm-acoustic', 'soft-synth', 'crisp-piano', 'high-contrast', 'progress'];
 
 export class CalculusSoundEngine {
@@ -68,6 +75,67 @@ export class CalculusSoundEngine {
     // straight line between) or 'wider' (see computePan). The graph's x window, for 'wider'.
     this.stereoWidth = 'original';
     this.xRange = null;
+
+    // 'original': the height's note counts in units and starts again every 10, with a break at
+    // zero, and the bass line follows its own rule. 'fitted': one scale for the graph (see
+    // FIT_LOW), each step slides along the curve to its note, and the bass line is the same note
+    // an octave lower. Fitted needs the graph's window (setWindow); without one it is 'original'.
+    this.design = 'original';
+  }
+
+  setDesign(mode) {
+    if (['original', 'fitted'].includes(mode)) this.design = mode;
+  }
+
+  fitted() {
+    return this.design === 'fitted' && Boolean(this.yRange);
+  }
+
+  // Fitted: the pitch for a height. Past the window's edge it still moves a little (at most four
+  // semitones, for a curve running off to an asymptote), then levels.
+  fittedFrequency(y) {
+    const [y0, y1] = this.yRange;
+    const t = (y - y0) / (y1 - y0);
+    const over = t > 1 ? t - 1 : t < 0 ? t : 0;
+    return FIT_LOW * Math.pow(2, Math.max(0, Math.min(1, t)) * FIT_OCTAVES + Math.tanh(over * 2) / 3);
+  }
+
+  // Fitted: the pitch for a slope. Flat is the middle of the scale; as steep as the graph's own
+  // diagonal is half an octave above (rising) or below (falling); straight up or down would be a
+  // whole octave. It never starts again, so slope 12 is not mistaken for slope 2.
+  slopeFrequency(slope) {
+    const aspect = this.xRange ? (this.xRange[1] - this.xRange[0]) / (this.yRange[1] - this.yRange[0]) : 1;
+    return FIT_MIDDLE * Math.pow(2, Math.atan(slope * aspect) / (Math.PI / 2));
+  }
+
+  // Fitted: the way to this step's note, as pitches. path: the curve's heights from the last
+  // step to this one (null: the curve breaks between them, so no slide). Without a path, a
+  // straight slide from the last height. Flat stretches have nothing to slide.
+  travelBend(prevY, y, path, freq) {
+    if (!this.pitchGlide || path === null) return null;
+    const ys = Array.isArray(path) && path.length > 1 ? path : Number.isFinite(prevY) ? [prevY, y] : null;
+    if (!ys || !ys.every(Number.isFinite)) return null;
+    const curve = Float32Array.from(ys, (v) => this.fittedFrequency(v));
+    curve[curve.length - 1] = freq;
+    let low = Infinity, high = 0;
+    for (const f of curve) { low = Math.min(low, f); high = Math.max(high, f); }
+    if (high / low < 1.004) return null;
+    return { curve, time: Math.max(0.07, Math.min(0.2, this.stepDurationSeconds * 0.4)) };
+  }
+
+  // Fitted: at zero a quiet octave rings with the note, so zero is recognisable as home.
+  playHomeRing(panner, now, freq, length) {
+    const ring = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    ring.type = 'sine';
+    ring.frequency.setValueAtTime(freq * 2, now);
+    g.gain.setValueAtTime(0.0005, now);
+    g.gain.linearRampToValueAtTime(this.volume * 0.16, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0005, now + length + 0.15);
+    ring.connect(g);
+    g.connect(panner);
+    ring.start(now);
+    ring.stop(now + length + 0.17);
   }
 
   setStereoWidth(mode) {
@@ -83,17 +151,26 @@ export class CalculusSoundEngine {
   // note (the zero note), falling is a low note. So where the curve has a peak or a valley,
   // the slope note passes through the middle note. Slope is null where there is none (a
   // corner or a jump): then no note.
-  playSlopeNote(x, slope, boundary = 5, prevSlope = null, delay = 0.15) {
-    if (!Number.isFinite(slope)) return;
+  // stepVoice: the sound of the step's own note, when it is not the chosen one.
+  playSlopeNote(x, slope, boundary = 5, prevSlope = null, delay = 0.15, stepVoice = null) {
+    const fit = this.fitted();
+    // Fitted: straight up or down (a vertical tangent) is the end of the slope scale. Original: no note.
+    if (typeof slope !== 'number' || Number.isNaN(slope) || (!fit && !Number.isFinite(slope))) return;
     const ctx = this.ensureContext();
     const when = ctx.currentTime + Math.max(0, delay);
-    const level = this.computeQuantizedLevel(Math.abs(slope) < 1e-6 ? 0 : slope);
-    const from = this.slideFrom(prevSlope, slope, (v) => this.computeQuantizedLevel(v).frequency);
+    // Fitted: the slope has its own scale (slopeFrequency), and the step's note steps back as
+    // the slope note starts, so the two are heard one after the other, never together.
+    const freqOf = fit ? (v) => this.slopeFrequency(v) : (v) => this.computeQuantizedLevel(v).frequency;
+    const level = { frequency: freqOf(Math.abs(slope) < 1e-6 ? 0 : slope) };
+    const from = this.slideFrom(prevSlope, slope, freqOf);
+    if (fit && this.lastStepGain) {
+      try { this.lastStepGain.gain.setTargetAtTime(0.0005, when, 0.03); } catch {}
+    }
     const panner = ctx.createStereoPanner();
     panner.pan.setValueAtTime(this.computePan(x, boundary), when);
     panner.connect(this.masterCompressor);
     // A different colour from the step's note, so the two are never confused.
-    const voice = ['beep', 'soft-square', 'chirp', 'progress'].includes(this.soundProfile) ? 'kalimba' : 'beep';
+    const voice = ['beep', 'soft-square', 'chirp', 'progress'].includes(stepVoice || this.soundProfile) ? 'kalimba' : 'beep';
     playVoice(ctx, panner, voice, { freq: level.frequency, fromFreq: from, when, length: Math.min(0.25, this.stepDurationSeconds * 0.5), volume: this.volume * 0.55 });
   }
 
@@ -266,6 +343,9 @@ export class CalculusSoundEngine {
   // Computes the Continuous Dark Bass Outline frequency (65 Hz .. 185 Hz)
   // Always stays in the warm, dark vocal-bass register so it never clashes with the foreground step pulses.
   computeBassOutlineFrequency(x, y, boundary = 5) {
+    // Fitted: the step's own note, an octave lower. The two move together, so the ear hears one
+    // voice with a soft floor under it, not two lines to follow.
+    if (this.fitted()) return Number.isFinite(y) ? this.fittedFrequency(y) / 2 : FIT_LOW;
     const safeBoundary = Math.max(1, Number(boundary) || 5);
     const normX = Math.max(-1, Math.min(1, (Number.isFinite(x) ? x : 0) / safeBoundary)); // -1 (left) .. +1 (right)
     const normY = Number.isFinite(y)
@@ -375,7 +455,7 @@ export class CalculusSoundEngine {
       const freq = this.computeBassOutlineFrequency(x, lim.y, boundary);
       this.droneOscMain.frequency.setTargetAtTime(freq, now, glideTime);
       this.droneOscSub.frequency.setTargetAtTime(freq * 0.5, now, glideTime);
-      this.droneFilter.frequency.setTargetAtTime(130, now, 0.02);
+      this.droneFilter.frequency.setTargetAtTime(this.fitted() ? freq * 0.9 : 130, now, 0.02);
       this.refreshDroneGain(0.15); // Dip volume by 85% at the open hole
       return;
     }
@@ -391,9 +471,11 @@ export class CalculusSoundEngine {
     this.droneOscSub.frequency.setTargetAtTime(freq * 0.5, now, glideTime);
 
     // Open filter slightly when Y > 0, keep darker when Y < 0
-    const cutoff = lim.y > 0 ? 245 : lim.y < 0 ? 175 : 210;
+    const fit = this.fitted();
+    const cutoff = fit ? freq * (lim.y < 0 ? 1.3 : 1.9) : lim.y > 0 ? 245 : lim.y < 0 ? 175 : 210;
     this.droneFilter.frequency.setTargetAtTime(cutoff, now, glideTime);
-    this.refreshDroneGain(1.0);
+    // Fitted: the bass reaches higher than 110 Hz, where the ear hears it louder; even it out.
+    this.refreshDroneGain(fit ? Math.min(1.2, Math.sqrt(110 / freq)) : 1.0);
   }
 
   stopBassOutline() {
@@ -424,6 +506,11 @@ export class CalculusSoundEngine {
   // Quantizes Y into discrete step levels with 10-unit octave gear wrapping
   computeQuantizedLevel(y) {
     if (!Number.isFinite(y)) return { region: 'undefined', frequency: 0, gear: 0, stepInGear: 0 };
+    if (this.fitted()) {
+      // One scale for the graph: no rounding to quarters, no starting again, no break at zero.
+      const home = Math.abs(y) <= (this.yRange[1] - this.yRange[0]) * 0.002;
+      return { region: home ? 'zero' : y > 0 ? 'tin' : 'bass', frequency: this.fittedFrequency(y), gear: 0, stepInGear: 0 };
+    }
     if (Math.abs(y) <= 1e-6) {
       return { region: 'zero', frequency: 330.0, gear: 0, stepInGear: 0 };
     }
@@ -451,8 +538,11 @@ export class CalculusSoundEngine {
   }
 
   // Plays the foreground step pulse according to the user's selected Sound Profile
-  playSeatedPulse(x, y, boundary = 5, prevY = null) {
-    if (this.soundProfile === 'progress' && this.yRange && Number.isFinite(y)) return this.playProgressBeep(x, y, boundary, prevY);
+  // path: fitted design, the curve's heights from the last step to this one (see travelBend).
+  // voice: a sound other than the chosen one (each function on a graph has its own).
+  playSeatedPulse(x, y, boundary = 5, prevY = null, { path, voice = null } = {}) {
+    const profile = voice || this.soundProfile;
+    if (profile === 'progress' && this.yRange && Number.isFinite(y)) return this.playProgressBeep(x, y, boundary, prevY);
     const ctx = this.ensureContext();
     const pan = this.computePan(x, boundary);
     const level = this.computeQuantizedLevel(y);
@@ -487,19 +577,32 @@ export class CalculusSoundEngine {
       }
     }
 
-    const from = this.slideFrom(prevY, y, (v) => this.computeQuantizedLevel(v).frequency);
+    const fit = this.fitted();
+    const bend = fit ? this.travelBend(prevY, y, path, level.frequency) : null;
+    const from = fit ? null : this.slideFrom(prevY, y, (v) => this.computeQuantizedLevel(v).frequency);
+    const below = level.region === 'bass';
+    // Fitted: the pitch no longer says which side of zero you are on, so the colour does. Below
+    // zero the same note is rounder (nothing much above it gets through); at zero an octave rings.
+    let out = panner;
+    if (fit && below) {
+      out = ctx.createBiquadFilter();
+      out.type = 'lowpass';
+      out.frequency.setValueAtTime(level.frequency * 1.8, now);
+      out.connect(panner);
+    }
+    const home = fit && level.region === 'zero';
 
     // Instruments, beeps and game sounds (voices.js), at the same pitch for the same height.
-    if (VOICES.includes(this.soundProfile)) {
+    if (VOICES.includes(profile)) {
       const voiceGain = ctx.createGain();
-      voiceGain.connect(panner);
+      voiceGain.connect(out);
       this.lastStepGain = voiceGain;
-      playVoice(ctx, voiceGain, this.soundProfile, { freq: level.frequency, fromFreq: from, when: now, length: this.stepDurationSeconds, volume: this.volume });
+      playVoice(ctx, voiceGain, profile, { freq: level.frequency, fromFreq: from, bend, when: now, length: this.stepDurationSeconds, volume: this.volume });
+      if (home) this.playHomeRing(panner, now, level.frequency, noteHold);
       return level;
     }
 
     // Configure waveform & filter according to selected Sound Profile
-    const profile = this.soundProfile;
     const oscMain = ctx.createOscillator();
     const oscColor = ctx.createOscillator();
     const filter = ctx.createBiquadFilter();
@@ -508,16 +611,42 @@ export class CalculusSoundEngine {
     this.lastStepGain = gain;
 
     const freq = level.frequency;
-    oscMain.frequency.setValueAtTime(from || freq, now);
     const glideTime = Math.min(0.08, noteHold * 0.3);
-    if (from) oscMain.frequency.exponentialRampToValueAtTime(freq, now + glideTime);
-    // The colour tone slides with the main one, keeping its distance.
-    const colorAt = (f) => {
-      oscColor.frequency.setValueAtTime(from ? (from * f) / freq : f, now);
-      if (from) oscColor.frequency.exponentialRampToValueAtTime(f, now + glideTime);
+    // An oscillator that rests at f: it slides there from the last step's pitch (original), or
+    // along the curve (fitted). The colour tone slides with the main one, keeping its distance.
+    const setPitch = (osc, f) => {
+      if (bend) {
+        const k = f / freq;
+        osc.frequency.setValueCurveAtTime(k === 1 ? bend.curve : bend.curve.map((v) => v * k), now, bend.time);
+        return;
+      }
+      osc.frequency.setValueAtTime(from ? (from * f) / freq : f, now);
+      if (from) osc.frequency.exponentialRampToValueAtTime(f, now + glideTime);
     };
+    setPitch(oscMain, freq);
+    const colorAt = (f) => setPitch(oscColor, f);
 
-    if (profile === 'gentle') {
+    if (fit) {
+      // The colour is set from the note itself, not from fixed frequencies, so a sound is the
+      // same sound wherever on the scale its note lies.
+      // [main wave, colour wave, colour's pitch, its level, its fade, filter, cutoff, cutoff at the end]
+      const recipes = {
+        gentle: ['sine', 'triangle', 0.5, below ? 0.5 : 0.25, noteHold, 'lowpass', Math.max(1100, freq * 1.5)],
+        'soft-synth': ['sine', 'sine', below ? 0.5 : 2, 0.2, noteHold, 'lowpass', Math.max(1800, freq * 3)],
+        'crisp-piano': ['triangle', 'sine', 2, 0.4, 0.08, 'lowpass', freq * 5, freq * 2],
+        'high-contrast': [below ? 'triangle' : 'sawtooth', 'sine', below ? 0.5 : 2.5, 0.3, 0.1, below ? 'lowpass' : 'highpass', freq * (below ? 1.5 : 1.2)],
+        'warm-acoustic': ['sine', 'triangle', below ? 2 : 3, 0.22, 0.11, below ? 'lowpass' : 'highpass', freq * (below ? 2.5 : 0.8)],
+      };
+      const [mainType, colorType, ratio, colorLevel, colorFade, filterType, cutoff, cutoffEnd] = recipes[profile] || recipes['warm-acoustic'];
+      oscMain.type = mainType;
+      oscColor.type = colorType;
+      colorAt(freq * ratio);
+      filter.type = filterType;
+      filter.frequency.setValueAtTime(cutoff, now);
+      if (cutoffEnd) filter.frequency.exponentialRampToValueAtTime(cutoffEnd, now + noteHold);
+      colorGain.gain.setValueAtTime(this.volume * colorLevel, now);
+      colorGain.gain.exponentialRampToValueAtTime(0.0005, now + colorFade);
+    } else if (profile === 'gentle') {
       // Pure tone with a quiet octave below, rounded off above 1.1 kHz: nothing sharp.
       oscMain.type = 'sine';
       oscColor.type = 'triangle';
@@ -566,7 +695,9 @@ export class CalculusSoundEngine {
     }
 
     const attackTime = profile === 'crisp-piano' ? 0.008 : profile === 'gentle' ? 0.06 : 0.02;
-    const peakGain = (level.region === 'bass' ? this.volume * 1.05 : this.volume * 0.72) * (profile === 'gentle' ? 0.8 : 1);
+    // Fitted: one level curve for the whole scale (higher notes sound louder to the ear).
+    const peakGain = (fit ? this.volume * 0.85 * Math.pow(330 / freq, 0.3) : level.region === 'bass' ? this.volume * 1.05 : this.volume * 0.72)
+      * (profile === 'gentle' ? 0.8 : 1);
 
     gain.gain.setValueAtTime(0.0005, now);
     gain.gain.linearRampToValueAtTime(peakGain, now + attackTime);
@@ -577,12 +708,13 @@ export class CalculusSoundEngine {
     oscColor.connect(colorGain);
     colorGain.connect(filter);
     filter.connect(gain);
-    gain.connect(panner);
+    gain.connect(out);
 
     oscMain.start(now);
     oscColor.start(now);
     oscMain.stop(now + noteTotal + 0.02);
     oscColor.stop(now + noteTotal + 0.02);
+    if (home) this.playHomeRing(panner, now, level.frequency, noteHold);
     return level;
   }
 
@@ -657,6 +789,25 @@ export class CalculusSoundEngine {
       gain.connect(panner);
       osc.start(now);
       osc.stop(now + 0.035);
+      return;
+    }
+
+    if (kind === 'crossing') {
+      // Where this function meets another one: two soft taps at this height, close together.
+      const freq = (Number.isFinite(baseY) && this.computeQuantizedLevel(baseY).frequency) || 330;
+      for (const at of [0.03, 0.12]) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq * 2, now + at);
+        gain.gain.setValueAtTime(0.0005, now + at);
+        gain.gain.linearRampToValueAtTime(this.volume * 0.3, now + at + 0.006);
+        gain.gain.exponentialRampToValueAtTime(0.0005, now + at + 0.06);
+        osc.connect(gain);
+        gain.connect(panner);
+        osc.start(now + at);
+        osc.stop(now + at + 0.07);
+      }
       return;
     }
 
@@ -830,8 +981,9 @@ export class CalculusSoundEngine {
   // Executes a step:
   // - During continuous Auto-Play (withBassOutline = true), updates and sustains the Continuous Dark Bass Outline.
   // - During manual J/K stepping (withBassOutline = false), plays only the discrete step pulse (+ optional cue) with no lingering drone.
-  playStepSequence({ x, lim, boundary, prevY, passedOver = [], landedOn = [], withBassOutline = false }) {
-    if (this.dotSounds !== 'new') return this.playStepSequenceOriginal({ x, lim, boundary, prevY, passedOver, landedOn, withBassOutline });
+  // path and voice: see playSeatedPulse.
+  playStepSequence({ x, lim, boundary, prevY, passedOver = [], landedOn = [], withBassOutline = false, path, voice = null }) {
+    if (this.dotSounds !== 'new') return this.playStepSequenceOriginal({ x, lim, boundary, prevY, passedOver, landedOn, withBassOutline, path, voice });
     // The dots at this x, solid first: a jump has a solid dot at one height and an open one at
     // the other, and both are heard, one after the other, each at its own height.
     const dots = landedOn.filter((l) => l.kind === 'solid-point' || l.kind === 'open-point')
@@ -854,11 +1006,11 @@ export class CalculusSoundEngine {
     // On a corner, the corner's slide (which passes through this height) is the step's note.
     const corner = this.cuesEnabled ? landedOn.find((l) => l.kind === 'corner') : null;
     if (corner) this.playLandmarkEffect('corner', x, boundary, lim.y, corner);
-    else this.playSeatedPulse(x, lim.y, boundary, prevY);
+    else this.playSeatedPulse(x, lim.y, boundary, prevY, { path, voice });
     if (!this.cuesEnabled) return;
     if (dots.length) { playDots(0.03); return; }
 
-    const priority = ['endpoint', 'corner', 'origin', 'maximum', 'minimum', 'x-axis'];
+    const priority = ['endpoint', 'corner', 'origin', 'maximum', 'minimum', 'crossing', 'x-axis'];
     const events = [...landedOn, ...passedOver].filter((e) => priority.includes(e.kind) && e !== corner);
     if (events.length > 0) {
       events.sort((a, b) => priority.indexOf(a.kind) - priority.indexOf(b.kind));
@@ -868,7 +1020,7 @@ export class CalculusSoundEngine {
   }
 
   // The step as it sounded before the bump, wind and corner sounds (Settings: original).
-  playStepSequenceOriginal({ x, lim, boundary, prevY, passedOver = [], landedOn = [], withBassOutline = false }) {
+  playStepSequenceOriginal({ x, lim, boundary, prevY, passedOver = [], landedOn = [], withBassOutline = false, path, voice = null }) {
     const hasOpenHoleHere = (!lim.defined && lim.hole) || landedOn.some((l) => l.kind === 'open-point');
 
     if (withBassOutline) {
@@ -896,13 +1048,13 @@ export class CalculusSoundEngine {
     }
 
     // 2. Play the foreground step pulse on top of the continuous dark bass outline
-    this.playSeatedPulse(x, lim.y, boundary, prevY);
+    this.playSeatedPulse(x, lim.y, boundary, prevY, { path, voice });
 
     if (!this.cuesEnabled) {
       return;
     }
 
-    const priority = ['open-point', 'solid-point', 'origin', 'maximum', 'minimum', 'x-axis'];
+    const priority = ['open-point', 'solid-point', 'origin', 'maximum', 'minimum', 'crossing', 'x-axis'];
     const allEvents = [...landedOn, ...passedOver].filter((e) => priority.includes(e.kind));
     if (allEvents.length > 0) {
       allEvents.sort((a, b) => priority.indexOf(a.kind) - priority.indexOf(b.kind));

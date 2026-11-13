@@ -2,6 +2,137 @@
 
 Earlier versions are described on the [releases page](https://github.com/ahemyaz06/math-notebook/releases).
 
+## 0.8.0 (beta)
+
+### Graph sound: one scale for each graph, one voice at a time
+
+The fitted notes, the slide and the slope sound were heard and found clear on 11 November 2026.
+Help > Settings > Graph sound > "How heights become notes" switches back to the original sounds,
+which are unchanged.
+
+- Fitted to the graph (the new default): the lowest note is the bottom of the graph and the
+  highest note its top, three octaves apart, however big or small the numbers are. The same rise
+  is the same musical step everywhere. Before, notes counted in units and started again every 10:
+  y = x squared from 100 to 196 went down, up, up, down, and y = 10x played one note from 80 to
+  140. Heights under a quarter were all one note; now nothing is rounded.
+- No leap at zero. Below zero the same scale carries on with a rounder sound; at zero a quiet
+  octave rings with the note.
+- Each step slides into its note along the curve from the last step, then rests: a steep step is
+  a long slide, a flat one has none, and nothing slides across a jump or an asymptote. "Sliding
+  notes" in Settings turns the slide off.
+- The bass line while playing is the note itself an octave lower, so there is one line to follow,
+  not two.
+- Each function on a graph has its own sound: the first has the sound chosen in Settings, the
+  next ones marimba, cello, harp and so on. Tab plays the new function's note where you are,
+  so higher or lower than the one you left is heard at once.
+- Where two functions cross is a point of interest, with two soft taps; period and comma stop
+  there ("crosses g(x) at 2, 4"). Not on a student copy that hides anything.
+- Minus: the difference between the selected function and the one Tab came from, as a curve of
+  its own to trace: above zero where the first is higher, zero where they cross. Minus again
+  takes it away. It is not saved in the document.
+- N: the lowest note, zero and the highest note of the graph, with what they stand for.
+- The slope sound (D) has its own scale: flat is the middle note and it never starts again, so
+  slope 12 is not mistaken for slope 2. The height's note steps back before it, so the two are
+  heard one after the other.
+- The sound guide has the new sounds (the scale, a sound for each function, crossing another
+  function); "Past 10" is only there with the original design.
+- Leaving graph mode no longer reads a position that was still waiting to be said.
+- Ten sounds to choose from instead of twenty-one, in five pairs: soft (Gentle, Flute), warm
+  (Marimba, Harp), clear (Piano, Beep), rich (Cello, Vibraphone), sharp (Guitar, Chiptune). A
+  sound chosen earlier that is no longer listed keeps playing until another is chosen.
+- Lessons in Help > Sound guide and lessons: eleven short ones, one idea each, from "higher and
+  lower" to "which graph is it". Each plays a sound, asks a question, says what the answer was,
+  and can be done again with a new sound. The guide opens on them and carries on where you left.
+- The guide's quiz has crossings; above and below zero moved to the lessons, where the same note
+  is heard in both colours.
+
+Found and fixed by going through the slope and derivative sounds note by note:
+
+- A derivative curve that goes outside the graph was squeezed into the last few notes. Under
+  y = x squared (shown from minus 2.5 to 30) the derivative from minus 10 to minus 2.5 moved a
+  fifth of a semitone a step; under y = sin(5x) the derivative was two notes. Such a curve, and a
+  difference made with minus, now has a scale of its own that reaches as far as the curve. Tab says
+  "on its own scale" and N plays its lowest and highest note. The functions the graph was made for
+  keep the graph's scale, so adding a derivative does not change how they sound.
+- The slope of a derivative curve (S, and the slope sound) is now measured in a way that suits its
+  rounded values. Before, the slope of a second derivative was always "could not estimate".
+- The first step after opening a graph or changing function slides too, from where the cursor is.
+- Home, End and other long ways: the slide has more points, so it still follows a wavy curve, and a
+  point of interest flown over (the origin's chime) is no longer sounded as if it were there.
+- The slope note is never in the same sound as the function's own note, and a vertical tangent has
+  a slope note (the top or bottom of the slope scale).
+- The slide of a difference curve stops at a jump in either of its two functions.
+- Opening a graph no longer says the lowest and highest note; N does, when asked.
+- New test `test_graph_sound.mjs`: the real graph mode with a stand-in for the audio that writes
+  down every pitch, checked against values worked out by hand.
+
+### Graph mode: a menu, and tangent and secant lines
+
+- Ctrl+Enter in graph mode (or M, or the Applications key) opens a menu of everything graph mode
+  can do where you are: play, points of interest, slope, limits, describe, next function, the
+  difference, the scale, the slope sound, the step, the ends of the curve, drawing. Each item says
+  its own key, and a letter shown in brackets also works inside the menu. While drawing, M stays the
+  drawing menu, and each of the two menus leads to the other. Opening a graph says "Control Enter
+  opens a menu of everything". It is also in Math > Graph.
+- T adds the tangent line to the curve where you are and says its equation ("y = 2x minus 1").
+  At a corner, a jump, the end of a curve or a vertical tangent it says why there is none.
+- The menu adds a secant line through the point you are on and another x that it asks for, and says
+  its equation and its slope, the average rate of change between the two points.
+- One press adds one line. A key held down a moment used to add two identical tangent lines; now
+  T, minus, D, Backspace, Delete and apostrophe act once however long they are held, and asking for
+  a line that is already there says "Already on the graph" and adds nothing.
+- A line is drawn in the picture and is a function like the others (Tab, its own sound). Where a
+  tangent touches its curve and where a secant crosses it are points of interest. The lines follow
+  their function if it is changed, are removed from the menu, and are not saved in the document.
+
+### Backspace and Delete take back the last thing
+
+- While drawing, Backspace takes back the last thing you did, whatever it was (a point, a move, a
+  smooth corner, an equation, a derivative, the graph's size), and pressing it again takes back the
+  one before. Delete does the same away from a point; on a point it still deletes that point.
+- Undo now says what it did: "Undone: the point at 1, 2.5 is at 1, 2 again", "the point at 1, 2 is
+  taken away", "the equation is taken away". Before, it said only "Undone". Ctrl+Z and Ctrl+Y work
+  as before.
+- In graph mode without drawing, Backspace or Delete takes back the last tangent line, secant line
+  or difference curve you added, newest first.
+- Both menus have "Take back the last thing you did".
+
+### Help > User guide in its own window
+
+- Help > User guide opens the guide in a window of its own, with real headings (H in browse mode
+  goes from part to part), a Contents list and working links. Before, it opened the README file
+  as plain Markdown text. Escape closes it; Alt+Tab goes back to the document.
+
+### Drawing on a graph
+
+- Ctrl+Shift+G makes an empty graph (minus 5 to 5) and opens it ready to draw on; Ctrl+D in graph
+  mode turns drawing on and off on any graph. Enter puts a point, joined to the last one; M opens
+  a menu of everything else, each command with its own key named. Points can be moved (G), made
+  smooth or sharp (R), open or solid (O), deleted; pieces started (N) and connected; the graph
+  made bigger at its edge.
+- A drawing is an exact function of x: lines and smooth curves through the points, with every
+  peak and valley at a point you put down. What would stop it being a function (two heights at
+  one x, a vertical line) is refused with the reason.
+- Several functions on one graph: the menu starts g(x) next to f(x), then h(x) and so on. Each is
+  a function on its own, so they may cross. Tab goes between the functions, and Enter draws on
+  the drawn function you last went to.
+- Derivatives as curves: apostrophe (or the menu) adds the derivative of the selected function,
+  pressed again the second derivative, a third time takes them away. It follows the function as
+  you move a point or change a number. For a drawing it is exact (a line gives a flat stretch at
+  its slope, a sharp corner gives a jump with two open dots, because there is no slope there).
+  For an equation it is measured from the curve, as the slope at a point is; it has no formula.
+- Equations in the graph: E adds one (checked first), T changes its numbers with the arrow keys.
+- The menu can make the graph's line in the document give the equations instead of the
+  description: each drawn part's formula with where it applies.
+- Insert > Graph from equations no longer has Ctrl+Shift+G; it is in the Insert menu and on the
+  toolbar (Graph). The new toolbar button is Draw.
+- Tested: `test_draw.mjs` (the maths, by hand-worked values) and `test_draw_ui.mjs` (the real
+  desktop app with real key presses). Two functions, or a function and its derivative, are heard
+  one at a time, each in its own sound.
+- Limits: hide options of a student copy do not apply to a drawing; no asymptotes in a drawing;
+  equation numbers are changed as digits only, not letters; an equation's derivative is not
+  given as a formula, and its numbers are right to about four decimals.
+
 ## 0.7.9 (beta)
 
 ### Checking a line of work

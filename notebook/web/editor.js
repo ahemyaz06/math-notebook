@@ -1301,7 +1301,41 @@ const graphMode = new GraphMode({
   root: $('graph-mode'), status: $('status'), reading: $('graph-reading'),
   onExit: () => { doc.focus(); if (graphReturn) placeCaretIn(graphReturn); say('Back in the document.'); },
   onKeys: () => showKeys('graph'),
+  // Drawn on (Ctrl+D): the document keeps the new graph, and its line says what it now shows.
+  onChange: (graph) => {
+    if (!graphReturn) return;
+    graphs.set(graphReturn.dataset.graphId, graph);
+    const prefix = /^[^:]{1,40}(?=:)/.exec(graphReturn.textContent)?.[0] || 'Graph';
+    graphReturn.textContent = `${prefix}: ${graph.summary || 'no description.'} Press Enter to explore it by sound.`;
+    setDirty(true);
+  },
+  canEdit: () => !studentView,
+  edit: { menu: $('graph-menu'), ask: $('graph-ask'), button: $('graph-edit') },
 });
+
+// Ctrl+Shift+G: an empty graph, minus 5 to 5 both ways, on a line of its own right here. It
+// opens ready to draw on.
+function drawGraph() {
+  const block = currentBlock();
+  const line = graphLine({ summary: 'Empty graph, ready to draw on. Shown for x from minus 5 to 5 and y from minus 5 to 5.',
+    span: { x: [-5, 5], y: [-5, 5] }, drawings: [], functions: [], points: [] });
+  if (block && isBlankLine(block) && block.previousElementSibling) block.replaceWith(line);
+  else if (block) block.after(line); else doc.append(line);
+  placeCaretIn(line);
+  setDirty(true);
+  exploreGraph(line);
+  graphMode.editor.toggle(true);
+}
+
+// Math > Graph > Draw on the graph: the same as Ctrl+D in graph mode; on a graph line it opens the graph first.
+function editGraph() {
+  if ($('graph-mode').hidden) {
+    const block = currentBlock();
+    if (!block?.classList.contains('graph-line')) { say('Move to a graph line first, or press Ctrl+Shift+G for a new graph to draw on.'); return; }
+    exploreGraph(block);
+  }
+  graphMode.command('edit');
+}
 
 function exploreGraph(block = currentBlock()) {
   // On an equation (not on a graph line): graph that equation.
@@ -2705,7 +2739,7 @@ async function exportStudentPdf() {
 const PREVIEW_SAFE = new Set(['studentPreview', 'teacherMode', 'keys', 'exploreGraph', 'readLine', 'find', 'findNext', 'findPrevious', 'wordCount',
   'nextHeading', 'previousHeading', 'headingList', 'nextNote', 'previousNote', 'saveStudentCopy', 'exportStudentDocx', 'exportStudentPdf',
   'settings', 'settingsReading', 'settingsSound', 'settingsAi', 'print', 'graphPlay', 'graphNextPoint', 'graphPreviousPoint',
-  'graphDescribe', 'graphReadPoint', 'graphStep', 'graphNextFunction', 'graphClose', 'graphSlope', 'graphLimits', 'graphSlopeSound', 'soundGuide', 'copyGraphLatex', 'convertMath', 'save', 'saveAs', 'checkLine']);
+  'graphDescribe', 'graphReadPoint', 'graphStep', 'graphNextFunction', 'graphClose', 'graphSlope', 'graphLimits', 'graphSlopeSound', 'graphScale', 'graphDifference', 'graphMenu', 'graphTangent', 'graphSecant', 'soundGuide', 'copyGraphLatex', 'convertMath', 'save', 'saveAs', 'checkLine']);
 
 // When a dialog closes, the document gets the focus back, unless graph mode or another
 // dialog is open (they keep it).
@@ -2840,12 +2874,26 @@ async function showKeys(section = null) {
       ['Interval for the equation, such as [0, 2pi]', 'Ctrl+Shift+D'],
       ['Comment next to the maths (not part of it)', 'Type # or // after the maths'],
       ['In the equation box: plain text or LaTeX', 'Ctrl+L']]],
-    ['Graphs', [['Graph the equation here, or explore the graph here', 'Ctrl+G, or Enter on a graph line'], ['New graph from equations', 'Ctrl+Shift+G']]],
-    ['In graph mode', [['Step along the function', 'J and K'], ['Play or stop', 'Space'], ['Next and previous point of interest', 'Period and comma'],
+    ['Graphs', [['Graph the equation here, or explore the graph here', 'Ctrl+G, or Enter on a graph line'], ['New empty graph to draw on', 'Ctrl+Shift+G'],
+      ['New graph from equations', 'Insert menu']]],
+    ['In graph mode', [['Menu of everything you can do here', 'Ctrl+Enter, or M'], ['Step along the function', 'J and K'], ['Play or stop', 'Space'], ['Next and previous point of interest', 'Period and comma'],
       ['Slope here', 'S'], ['Limits from the left and the right', 'L'], ['Slope sound on or off', 'D'],
+      ['Hear the lowest and the highest note, and what they stand for', 'N'],
+      ['Difference from the function before, as a curve; again removes it', 'Minus'],
+      ['Tangent line where you are', 'T'], ['Secant line through this point and another', 'In the menu'],
+      ['Take back the last line or curve you added', 'Backspace or Delete'],
       ['Read the point', 'V'], ['Describe the graph', 'I'], ['Move freely', 'Arrow keys'], ['Back on the function', 'C'],
       ['Next and previous function', 'Tab, Shift+Tab'], ['Ends of the function', 'Home and End'], ['Step size', 'F'],
-      ['These keys', 'F1 or question mark'], ['Back to the document', 'Escape']]],
+      ['Draw on the graph, on or off', 'Ctrl+D'], ['These keys', 'F1 or question mark'], ['Back to the document', 'Escape']]],
+    ['Drawing on a graph (Ctrl+D)', [['Move the cursor', 'Arrow keys'], ['Put a point here; it is joined to the last one', 'Enter'],
+      ['Menu of everything you can do here', 'M, or Enter on a point'], ['Next and previous point you put down', 'Period and comma'],
+      ['Move the point here', 'G, then arrow keys, then Enter'], ['Delete the point here', 'Delete'], ['Take back the last thing you did', 'Backspace; Delete away from a point'],
+      ['Smooth curve or sharp corner at this point; away from a point, for new points', 'R'], ['Open dot or solid dot', 'O'],
+      ['Start a new piece, not joined to the rest', 'N'], ['Another function to draw on the same graph, g(x)', 'In the menu'],
+      ['Which drawn function Enter draws on', 'Tab goes between the functions'],
+      ['Derivative of the selected function as a curve: first, second, none', 'Apostrophe'], ['Add an equation', 'E'], ['Play with the numbers of an equation', 'T, then arrow keys'],
+      ['Size of the graph', 'W, or an arrow key twice at the edge'], ['Undo and redo', 'Ctrl+Z, Ctrl+Y'],
+      ['Hear what you drew', 'Space plays it, J and K step along it, I describes it']]],
     ['Lists, tables and headings', [['Bulleted and numbered list', 'Ctrl+Shift+L, Ctrl+Shift+7'],
       ['List item in or out a level, next table cell', 'Tab, Shift+Tab'], ['Heading levels 1 to 3, normal text', 'Ctrl+Alt+1, 2, 3, 0'],
       ['Next and previous heading', 'Ctrl+Page Down, Ctrl+Page Up'], ['Page break', 'Ctrl+Enter'],
@@ -3165,6 +3213,7 @@ $('settings-form').addEventListener('submit', (e) => {
 $('settings-defaults').addEventListener('click', () => resetSettings(true));
 // Hearing a sound before choosing it: a few notes as you move through the list, a whole example with Listen.
 $('set-sound_profile').addEventListener('change', () => graphMode.preview(settingsFromForm(), true));
+$('set-sound_design').addEventListener('change', () => graphMode.preview(settingsFromForm(), true));
 $('sound-listen').addEventListener('click', () => say(graphMode.preview(settingsFromForm())));
 $('set-stereo_width').addEventListener('change', () => graphMode.previewStereo(settingsFromForm()));
 $('settings-dialog').addEventListener('close', () => { (settingsReturn && document.contains(settingsReturn) ? settingsReturn : doc).focus(); });
@@ -3172,17 +3221,21 @@ $('settings-dialog').addEventListener('close', () => { (settingsReturn && docume
 // ---------- the sound guide (Help > Sound guide, or Help > Settings > Graph sound) ----------
 
 // [name, what it is, what you hear]. The names are graph-mode.js guide()'s.
-function guideSounds(dots) {
+function guideSounds(dots, design) {
   const newDots = dots !== 'original';
+  const fitted = design !== 'original';
   return [
+    ...(fitted ? [['scale', 'The scale of a graph', 'The lowest note is the bottom of the graph, the highest note its top, whatever the numbers are: here minus 6, zero and 6. In graph mode N plays them for the graph you are on and says the numbers.']] : []),
     ['above', 'Above zero', 'A clear note. The higher the curve, the higher the note: here 1, 3 and 6.'],
-    ['zero', 'At zero', 'The middle note: zero, home.'],
-    ['below', 'Below zero', 'A warmer, lower note, lower as the curve goes down: minus 1, minus 3, minus 6.'],
-    ['up', 'Going up', 'Steps along a rising curve: each note a little higher, sliding up from the last.'],
+    ['zero', 'At zero', fitted ? 'Zero, home: the note with a quiet ring an octave above it.' : 'The middle note: zero, home.'],
+    ['below', 'Below zero', fitted ? 'The same scale carries on down, with a rounder, softer sound: minus 1, minus 3, minus 6.' : 'A warmer, lower note, lower as the curve goes down: minus 1, minus 3, minus 6.'],
+    ['up', 'Going up', fitted ? 'Steps along a rising curve: each note slides up along the curve from the last step, then rests. A steep step is a long slide, a flat one none.' : 'Steps along a rising curve: each note a little higher, sliding up from the last.'],
     ['down', 'Going down', 'Steps along a falling curve, through zero and below it.'],
     ['leftright', 'Left and right', 'Where you are along x: the left of the graph in your left ear, the right in your right ear.'],
-    ['gear', 'Past 10', 'Above 10 the notes start again from low, and a small tick marks the change.'],
-    ['bass', 'The bass line', 'While playing with Space, a soft low line follows the curve under the notes.'],
+    ...(fitted ? [] : [['gear', 'Past 10', 'Above 10 the notes start again from low, and a small tick marks the change.']]),
+    ['bass', 'The bass line', fitted ? 'While playing with Space, a soft low line under the notes: the same note, an octave lower.' : 'While playing with Space, a soft low line follows the curve under the notes.'],
+    ...(fitted ? [['voices', 'One sound for each function', 'The same rise three times: in the sound of the first function on a graph, of the second, and of the third. Tab goes to the next function and plays its note where you are.'],
+      ['crossing', 'Crossing another function', 'Two soft taps where the function you are on meets another one. Period and comma stop there too.']] : []),
     ['peak', 'A peak', 'A swell that rises: the highest point nearby.'],
     ['valley', 'A valley', 'A swell that falls: the lowest point nearby.'],
     ['x-axis', 'Crossing the x-axis', 'A soft tick where the curve crosses zero.'],
@@ -3193,10 +3246,89 @@ function guideSounds(dots) {
     ['corner', 'A sharp corner', newDots ? 'A slide down then up (a V), or up then down (a peak with a point).' : 'No sound of its own with the original dot sounds.'],
     ['asymptote', 'No curve here', 'A low knock: an asymptote, or a place the function is not defined.'],
     ['end', 'Where the curve ends', newDots ? 'A smaller bump (the end point is included) or wind (it is not).' : 'The point sound, softer.'],
-    ['slope', 'The slope sound', 'D in graph mode. After each note, a soft second note for the slope: high is rising, the middle note is flat, low is falling. Here y = x squared: the slope note climbs from low, through the middle note at the valley, to high.'],
+    ['slope', 'The slope sound', `D in graph mode. After each note, a soft second note for the slope: high is rising, the middle note is flat, low is falling. Here y = x squared: the slope note climbs from low, through the middle note at the valley, to high.${fitted ? ' The height\'s note steps back first, so the two are heard one after the other.' : ''}`],
   ];
 }
-const QUIZ = ['up', 'down', 'peak', 'valley', 'x-axis', 'origin', 'solid', 'open', 'corner', 'asymptote', 'above', 'below'];
+// The mystery sounds. Fitted: above and below zero are no longer notes of their own kind (they
+// are the same scale in two colours, which the lessons teach), and crossings are new.
+const quizNames = (design) => (design !== 'original'
+  ? ['up', 'down', 'peak', 'valley', 'x-axis', 'origin', 'solid', 'open', 'corner', 'asymptote', 'crossing']
+  : ['up', 'down', 'peak', 'valley', 'x-axis', 'origin', 'solid', 'open', 'corner', 'asymptote', 'above', 'below']);
+
+// The lessons: one idea each, a sound (graph-mode.js lesson()) and a question about it.
+// [name, title, what to know, the question, [[answer, its words], ...]]. The sound played is
+// one of the answers, chosen by chance, so a lesson can be done again and again.
+const LESSONS = [
+  ['pitch', 'Higher and lower', 'The higher the curve, the higher the note. The lowest note is the bottom of the graph and the highest note is its top. You will hear two notes.',
+    'Was the second note higher or lower than the first?', [['higher', 'Higher'], ['lower', 'Lower']]],
+  ['side', 'Left and right', 'Where you are along x is where the sound is: the left of the graph in your left ear, the middle in both ears, the right in your right ear. Headphones make this clear. You will hear one note.',
+    'Where was the note?', [['left', 'Left'], ['middle', 'Middle'], ['right', 'Right']]],
+  ['direction', 'Going up, going down', 'Stepping along a curve with K, each note slides in from the last step and then rests. A slide up means the curve is rising, a slide down means it is falling, and no slide means it is flat. You will hear seven steps from left to right.',
+    'Was the curve going up, going down, or flat?', [['up', 'Going up'], ['down', 'Going down'], ['flat', 'Flat']]],
+  ['steep', 'Steep and gentle', 'A steep curve climbs a lot in each step, so its slides are long and its notes far apart. A gentle curve has short slides and notes close together. You will hear two rising lines, one after the other.',
+    'Which line was steeper?', [['first', 'The first'], ['second', 'The second']]],
+  ['bend', 'How a curve bends', 'On a straight line every step is the same size. When the steps grow, the curve is getting steeper, bending upward, like x squared. When the steps shrink, it is flattening out, like a square root. You will hear a curve that rises all the way.',
+    'Did it get steeper or flatten out?', [['steeper', 'It got steeper'], ['flatter', 'It flattened out']]],
+  ['sign', 'Above zero, below zero, at zero', 'The scale does not break at zero, so the colour of the sound says which side you are on. Above zero the note is clear. Below zero it is rounder and duller. Exactly at zero a quiet higher note rings with it. You will hear the same note three times.',
+    'Where was it?', [['above', 'Above zero'], ['below', 'Below zero'], ['zero', 'At zero']]],
+  ['turn', 'Peaks and valleys', 'Through a valley the notes fall and then rise, and at its lowest point a swell goes down. Over a peak they rise and then fall, and at its highest point a swell goes up. Period and comma jump to these points. You will hear a curve from left to right.',
+    'Was it a peak or a valley?', [['peak', 'A peak'], ['valley', 'A valley']]],
+  ['dots', 'Dots and gaps', 'A solid dot is a small bump: the point is on the graph. An open dot is a breath of wind: the curve goes up to it, but the point is missing. A low knock means there is no curve here at all. You will hear a rising line with something in its middle.',
+    'What was in the middle?', [['solid', 'A solid dot'], ['open', 'An open dot, a hole'], ['asymptote', 'No curve there']]],
+  ['two', 'Two functions', 'Each function on a graph has its own sound. Tab goes to the next function and plays its note at the same x, so you hear at once whether it is higher or lower there. Two functions never sound together. You will hear the first function, then the second.',
+    'Was the second function higher or lower there?', [['higher', 'Higher'], ['lower', 'Lower']]],
+  ['slope', 'The slope sound', 'D turns the slope sound on. After each note comes a second, softer note for the slope: the middle note means flat, a higher one rising, a lower one falling. You will hear the middle note by itself first, then one step with its slope note.',
+    'Was the curve rising or falling there?', [['rising', 'Rising'], ['falling', 'Falling']]],
+  ['shape', 'Which graph is it', 'Now a whole graph, as Space plays it. Listen for where it rises and falls and how it bends.',
+    'Which graph was it?', [['lineUp', 'A line going up'], ['lineDown', 'A line going down'], ['valley', 'A valley, like x squared'], ['peak', 'A peak, like minus x squared'], ['wave', 'A wave, like sine']]],
+];
+let lessonIndex = 0;
+let lessonAnswer = null;
+
+// Shows a lesson and waits for Play. another: the same lesson again with a new sound.
+function showLesson(index, another = false) {
+  lessonIndex = Math.max(0, Math.min(LESSONS.length - 1, index));
+  const [, title, teach, ask, answers] = LESSONS[lessonIndex];
+  lessonAnswer = answers[Math.floor(Math.random() * answers.length)][0];
+  $('lesson-box').hidden = false;
+  $('lesson-start').hidden = true;
+  const fitted = guideValues.sound_design !== 'original';
+  $('lesson-text').textContent = another ? `Lesson ${lessonIndex + 1}, ${title}, another one. ${ask}`
+    : `Lesson ${lessonIndex + 1} of ${LESSONS.length}: ${title}. ${teach} Press Play, then answer: ${ask}${fitted ? '' : ' (The lessons are played with the notes fitted to the graph, not with the original notes chosen in Settings.)'}`;
+  $('lesson-answers').replaceChildren(...answers.map(([value, words]) => el('button', { type: 'button', 'data-answer': value }, words)));
+  $('lesson-answers').hidden = true;
+  $('lesson-result').textContent = '';
+  $('lesson-play').textContent = 'Play';
+  $('lesson-again').hidden = true;
+  $('lesson-next').hidden = lessonIndex === LESSONS.length - 1;
+  $('lesson-previous').hidden = lessonIndex === 0;
+  $('lesson-play').focus();
+}
+$('lesson-start').addEventListener('click', () => showLesson(lessonIndex));
+$('lesson-play').addEventListener('click', () => {
+  graphMode.lesson(LESSONS[lessonIndex][0], lessonAnswer, guideValues);
+  $('lesson-answers').hidden = false;
+  $('lesson-play').textContent = 'Play it again';
+});
+$('lesson-answers').addEventListener('click', (e) => {
+  const chosen = e.target.closest('button')?.dataset.answer;
+  if (!chosen || !lessonAnswer) return;
+  const words = LESSONS[lessonIndex][4].find(([value]) => value === lessonAnswer)[1];
+  const last = lessonIndex === LESSONS.length - 1;
+  if (chosen !== lessonAnswer) {
+    $('lesson-result').textContent = `Not quite. It was: ${words}. Play it again to hear it, or try another one.`;
+    $('lesson-again').hidden = false;
+    return;
+  }
+  $('lesson-result').textContent = `Right: ${words}.${last ? ' That was the last lesson. Test yourself, further down, plays mystery sounds; or open a graph and try it there.' : ''}`;
+  $('lesson-answers').hidden = true;
+  $('lesson-again').hidden = false;
+  (last ? $('lesson-again') : $('lesson-next')).focus();
+});
+$('lesson-again').addEventListener('click', () => showLesson(lessonIndex, true));
+$('lesson-next').addEventListener('click', () => showLesson(lessonIndex + 1));
+$('lesson-previous').addEventListener('click', () => showLesson(lessonIndex - 1));
+
 let guideValues = null;
 let quizAnswer = null;
 let guideReturn = null;
@@ -3205,7 +3337,7 @@ function openSoundGuide(values = null) {
   guideValues = values || savedSettings?.values || {};
   const list = $('sound-guide-list');
   list.replaceChildren();
-  const sounds = guideSounds(guideValues.dot_sounds);
+  const sounds = guideSounds(guideValues.dot_sounds, guideValues.sound_design);
   for (const [name, title, words] of sounds) {
     const id = `guide-${name}`;
     const button = el('button', { type: 'button', 'data-sound': name, 'aria-describedby': id }, `Play: ${title}`);
@@ -3214,20 +3346,25 @@ function openSoundGuide(values = null) {
     list.append(item);
   }
   const answers = $('sound-quiz-answers');
-  answers.replaceChildren(...QUIZ.map((name) => el('button', { type: 'button', 'data-answer': name }, sounds.find((s) => s[0] === name)[1])));
+  answers.replaceChildren(...quizNames(guideValues.sound_design).map((name) => el('button', { type: 'button', 'data-answer': name }, sounds.find((s) => s[0] === name)[1])));
   answers.hidden = true;
   $('sound-quiz-result').textContent = '';
   quizAnswer = null;
+  // The lessons carry on where they were left.
+  $('lesson-box').hidden = true;
+  $('lesson-start').hidden = false;
+  $('lesson-start').textContent = lessonIndex ? `Carry on with lesson ${lessonIndex + 1} of ${LESSONS.length}` : 'Start the lessons';
   guideReturn = document.activeElement;
   $('sound-guide-dialog').showModal();
-  list.querySelector('button').focus();
+  $('lesson-start').focus();
 }
 $('sound-guide-list').addEventListener('click', (e) => {
   const name = e.target.closest('button')?.dataset.sound;
   if (name) graphMode.guide(name, guideValues);
 });
 $('sound-quiz-play').addEventListener('click', () => {
-  quizAnswer = QUIZ[Math.floor(Math.random() * QUIZ.length)];
+  const names = quizNames(guideValues.sound_design);
+  quizAnswer = names[Math.floor(Math.random() * names.length)];
   graphMode.guide(quizAnswer, guideValues);
   $('sound-quiz-answers').hidden = false;
   $('sound-quiz-result').textContent = 'Which sound was it? Choose below, or play it again with the same button.';
@@ -3236,7 +3373,7 @@ $('sound-quiz-play').addEventListener('click', () => {
 $('sound-quiz-answers').addEventListener('click', (e) => {
   const name = e.target.closest('button')?.dataset.answer;
   if (!name || !quizAnswer) return;
-  const title = (n) => guideSounds(guideValues.dot_sounds).find((s) => s[0] === n)[1];
+  const title = (n) => guideSounds(guideValues.dot_sounds, guideValues.sound_design).find((s) => s[0] === n)[1];
   $('sound-quiz-result').textContent = name === quizAnswer ? `Right: ${title(quizAnswer)}.` : `Not quite: that was ${title(quizAnswer)}. Play a new one when you are ready.`;
   graphMode.guide(quizAnswer, guideValues);
   quizAnswer = name === quizAnswer ? null : quizAnswer;
@@ -3517,6 +3654,11 @@ const COMMANDS = {
   graphSlope: () => graphCommand('slope'),
   graphLimits: () => graphCommand('limits'),
   graphSlopeSound: () => graphCommand('slopeSound'),
+  graphScale: () => graphCommand('scale'),
+  graphDifference: () => graphCommand('difference'),
+  graphMenu: () => graphCommand('menu'),
+  graphTangent: () => graphCommand('tangent'),
+  graphSecant: () => graphCommand('secant'),
   teacherMode: () => setTeacherMode(!teacherMode),
   hideLine: hideLines,
   hideWords,
@@ -3529,6 +3671,8 @@ const COMMANDS = {
   heading3: () => setBlockType('h3'),
   insertEquation: () => openEquation(null),
   insertGraph: openGraphDialog,
+  drawGraph,
+  editGraph,
   heading1: () => setBlockType('h1'),
   heading2: () => setBlockType('h2'),
   normalText: () => setBlockType('p'),
@@ -3555,14 +3699,14 @@ const DOCUMENT_KEYS = {
   'Ctrl+Shift+7': 'numberedList', 'Ctrl+Enter': 'pageBreak', 'Ctrl+Alt+1': 'heading1', 'Ctrl+Alt+2': 'heading2', 'Ctrl+Alt+3': 'heading3',
   'Ctrl+Alt+0': 'normalText', 'Ctrl+Shift+E': 'toEquation', 'Ctrl+E': 'editEquation', 'Alt+=': 'insertEquation', 'Ctrl+F': 'find',
   'Ctrl+H': 'replace', F3: 'findNext', 'Shift+F3': 'findPrevious', 'Ctrl+Shift+M': 'convertMath', 'Ctrl+Shift+W': 'exportDocx',
-  F1: 'keys', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'insertGraph', 'Ctrl+F9': 'hideWords', 'Ctrl+Shift+F9': 'hideLine', 'Ctrl+Shift+V': 'pastePlain', F11: 'copyEquationDown', 'Ctrl+T': 'toPlainText', 'Ctrl+Shift+T': 'toPlainText', 'Ctrl+L': 'toLatexText', 'Ctrl+PageDown': 'nextHeading', 'Ctrl+PageUp': 'previousHeading', 'Ctrl+Shift+H': 'headingList',
+  F1: 'keys', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'drawGraph', 'Ctrl+F9': 'hideWords', 'Ctrl+Shift+F9': 'hideLine', 'Ctrl+Shift+V': 'pastePlain', F11: 'copyEquationDown', 'Ctrl+T': 'toPlainText', 'Ctrl+Shift+T': 'toPlainText', 'Ctrl+L': 'toLatexText', 'Ctrl+PageDown': 'nextHeading', 'Ctrl+PageUp': 'previousHeading', 'Ctrl+Shift+H': 'headingList',
   'Ctrl+Shift+D': 'interval', F7: 'spelling', 'Alt+F7': 'nextMisspelling', 'Ctrl+Z': 'undo', 'Ctrl+Y': 'redo', 'Ctrl+Shift+Z': 'redo', F9: 'checkLine',
 };
 
 // Without the desktop menu bar (tests in a plain browser), the menu's other shortcuts work here too.
 const FALLBACK_KEYS = {
   'Alt+=': 'insertEquation', 'Ctrl+E': 'editEquation', 'Ctrl+Shift+E': 'toEquation', 'Ctrl+Shift+T': 'toPlainText', 'Ctrl+T': 'toPlainText', 'Ctrl+L': 'toLatexText',
-  'Ctrl+Shift+R': 'readLine', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'insertGraph', F8: 'nextNote', 'Shift+F8': 'previousNote', F9: 'checkLine',
+  'Ctrl+Shift+R': 'readLine', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'drawGraph', F8: 'nextNote', 'Shift+F8': 'previousNote', F9: 'checkLine',
   'Ctrl+Alt+1': 'heading1', 'Ctrl+Alt+2': 'heading2', 'Ctrl+Alt+3': 'heading3', 'Ctrl+Alt+0': 'normalText', F1: 'keys', 'Ctrl+,': 'settings',
   'Ctrl+B': 'bold', 'Ctrl+I': 'italic', 'Ctrl+U': 'underline', 'Ctrl+Shift+L': 'bulletList', 'Ctrl+Shift+&': 'numberedList', 'Ctrl+Shift+7': 'numberedList',
   'Ctrl+Enter': 'pageBreak', 'Ctrl+F': 'find', 'Ctrl+H': 'replace', F3: 'findNext', 'Shift+F3': 'findPrevious', 'Ctrl+Shift+M': 'convertMath',

@@ -58,10 +58,16 @@ def _spec():
         # a nearby reading that matches replaces it (reading_check.py). Nothing happens without Tectonic.
         'check_readings': (True, [True, False]),
         # Graph sound (Sound Lab)
-        # The calm profiles, then the voices in sound-lab/public/voices.js (instruments, beeps, game sounds)
+        # Settings lists ten of these (editor.html: gentle, flute, marimba, harp, piano, beep, cello,
+        # vibraphone, guitar, chiptune); the others stay valid, so a sound saved earlier still plays.
         'sound_profile': ('gentle', ['gentle', 'warm-acoustic', 'soft-synth', 'crisp-piano', 'high-contrast', 'progress',
                                      'piano', 'guitar', 'harp', 'marimba', 'kalimba', 'vibraphone', 'flute', 'cello',
                                      'beep', 'soft-square', 'chirp', 'chiptune', 'retro-triangle', 'bubble', 'arcade']),
+        # How heights become notes. 'fitted': one scale for each graph (the lowest note is the bottom of
+        # the graph's window, the highest its top), each step slides along the curve into its note, the
+        # bass line is the same note an octave lower, and each function has its own sound. 'original':
+        # notes count in units and start again every 10, with a break at zero (sound-engine.js).
+        'sound_design': ('fitted', ['fitted', 'original']),
         # Clearer pitch: notes slide from the last height's pitch and are further apart (off: the original)
         'pitch_glide': (True, [True, False]),
         # The slope sound in graph mode: a soft second note for the slope after each step (D turns it on or off)

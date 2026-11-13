@@ -1,6 +1,7 @@
 // A LaTeX source file (.tex) as notebook blocks, and graphs to and from pgfplots code.
 // Rules, not AI: the source already holds the exact maths; this only reads its structure.
 // Blocks are the same as docx.js uses, plus { type: 'graph', graph } and { type: 'note', text }.
+import { drawingsOf, drawnFunction } from './draw.js';
 import { latexToMathml } from './mathml.js';
 import { latexToPlain, parsePlain, plainToLatex } from './equation.js';
 import { makeGraph, compileFunction, studentGraph } from './graphs.js';
@@ -1052,8 +1053,26 @@ export function graphToPgfplots(graph) {
     const pts = (c.corners || c.samples || []).filter(Boolean);
     if (pts.length) lines.push(`\\addplot[thick] coordinates {${pts.map(([x, y]) => `(${x},${y})`).join(' ')}};`);
   }
-  const solid = (graph.points || []).filter((p) => p.kind !== 'open dot');
-  const open = (graph.points || []).filter((p) => p.kind === 'open dot');
+  // Drawn by hand: each piece as its points, with points along the way where it curves.
+  const drawnDots = [];
+  for (const one of drawingsOf(graph)) {
+    const drawn = drawnFunction(one);
+    drawnDots.push(...drawn.dots().map((d) => ({ kind: d.kind, coordinate: [d.x, d.y] })));
+    for (const piece of one.pieces) {
+    const pts = piece.points, out = [];
+    pts.forEach((p, i) => {
+      const before = pts[i - 1];
+      if (before && drawn.formulaAt((before.x + p.x) / 2).slope === null) {
+        for (let k = 1; k < 16; k += 1) { const x = before.x + ((p.x - before.x) * k) / 16; out.push([+x.toPrecision(10), +drawn.limitAt(x).y.toPrecision(10)]); }
+      }
+      out.push([p.x, p.y]);
+    });
+    if (out.length > 1) lines.push(`\\addplot[thick] coordinates {${out.map(([x, y]) => `(${x},${y})`).join(' ')}};`);
+    }
+  }
+  const dots = [...(graph.points || []), ...drawnDots];
+  const solid = dots.filter((p) => p.kind !== 'open dot');
+  const open = dots.filter((p) => p.kind === 'open dot');
   if (solid.length) lines.push(`\\addplot[only marks, mark=*] coordinates {${solid.map((p) => `(${p.coordinate.join(',')})`).join(' ')}};`);
   if (open.length) lines.push(`\\addplot[only marks, mark=*, mark options={fill=white}] coordinates {${open.map((p) => `(${p.coordinate.join(',')})`).join(' ')}};`);
   lines.push('\\end{axis}', '\\end{tikzpicture}');

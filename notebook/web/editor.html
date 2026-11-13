@@ -27,7 +27,8 @@
   </div>
   <div class="group" role="group" aria-label="Maths">
     <button type="button" data-command="insertEquation" title="Insert an equation (Alt+=)">Equation</button>
-    <button type="button" data-command="insertGraph" title="New graph from equations (Ctrl+Shift+G)">Graph</button>
+    <button type="button" data-command="insertGraph" title="New graph from equations">Graph</button>
+    <button type="button" data-command="drawGraph" title="New empty graph to draw on (Ctrl+Shift+G)">Draw</button>
     <button type="button" data-command="checkLine" title="Check this line against the line above (F9)">Check line</button>
   </div>
 </div>
@@ -49,7 +50,9 @@
     <li><kbd>Tab</kbd> next function</li>
     <li><kbd>I</kbd> describe · <kbd>V</kbd> read point · <kbd>F</kbd> step size</li>
     <li><kbd>Esc</kbd> back to the document</li>
+    <li class="when-editing"><kbd>Enter</kbd> put a point · <kbd>M</kbd> menu · <kbd>G</kbd> move a point · <kbd>R</kbd> smooth or sharp · <kbd>E</kbd> equation · <kbd>T</kbd> its numbers · <kbd>'</kbd> derivative</li>
   </ul>
+  <button type="button" id="graph-edit" class="graph-edit" aria-pressed="false" tabindex="-1" title="Draw on this graph: points, lines, curves, equations (Ctrl+D)">Edit graph (Ctrl+D)</button>
 </section>
 
 <dialog id="keys-dialog" aria-labelledby="keys-title" class="wide">
@@ -177,6 +180,24 @@
   </form>
 </dialog>
 
+<dialog id="graph-menu" class="graph-menu" aria-labelledby="graph-menu-title">
+  <h2 id="graph-menu-title">Graph menu</h2>
+  <div role="menu" aria-label="Graph menu"></div>
+</dialog>
+
+<dialog id="graph-ask" aria-labelledby="graph-ask-title">
+  <h2 id="graph-ask-title">Graph</h2>
+  <form method="dialog">
+    <label for="graph-ask-text">Value</label>
+    <input id="graph-ask-text" autocomplete="off" spellcheck="false">
+    <p class="error" role="alert"></p>
+    <div class="buttons">
+      <button value="ok">OK</button>
+      <button value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="student-graph-dialog" aria-labelledby="student-graph-title">
   <h2 id="student-graph-title">Graph for students</h2>
   <form method="dialog" id="student-graph-form">
@@ -297,39 +318,35 @@
     <div class="settings-panel" role="tabpanel" id="settings-sound" aria-labelledby="settings-tab-sound" hidden>
       <label for="set-sound_profile">Sound</label>
       <select id="set-sound_profile" name="sound_profile">
-        <optgroup label="Calm">
-          <option value="gentle">Gentle: soft, no sharp attack</option>
-          <option value="warm-acoustic">Warm acoustic: marimba and glass bell</option>
-          <option value="soft-synth">Soft synth</option>
-          <option value="crisp-piano">Crisp piano: clear attack</option>
-          <option value="high-contrast">High contrast: bass against tin</option>
-        </optgroup>
-        <optgroup label="Instruments">
-          <option value="piano">Piano</option>
-          <option value="guitar">Guitar: plucked string</option>
-          <option value="harp">Harp</option>
-          <option value="marimba">Marimba: wooden bar</option>
-          <option value="kalimba">Kalimba: thumb piano</option>
-          <option value="vibraphone">Vibraphone: metal bar with a slow shimmer</option>
+        <optgroup label="Soft">
+          <option value="gentle">Gentle: a soft pure tone, no sharp attack</option>
           <option value="flute">Flute: soft and breathy</option>
-          <option value="cello">Cello: bowed string</option>
         </optgroup>
-        <optgroup label="Beeps">
-          <option value="progress">Progress beep: pitch climbs from the bottom of the graph to the top, softer below zero</option>
-          <option value="beep">Beep: short pure tone</option>
-          <option value="soft-square">Computer beep: hollow, rounded</option>
-          <option value="chirp">Chirp: each note slides all the way from the last height</option>
+        <optgroup label="Warm">
+          <option value="marimba">Marimba: a warm wooden knock</option>
+          <option value="harp">Harp: a plucked string that rings</option>
         </optgroup>
-        <optgroup label="Game sounds">
-          <option value="chiptune">Chiptune: retro square wave</option>
-          <option value="retro-triangle">Retro bass: stepped triangle wave</option>
-          <option value="bubble">Bubble pop</option>
-          <option value="arcade">Arcade blip: note and its octave</option>
+        <optgroup label="Clear">
+          <option value="piano">Piano</option>
+          <option value="beep">Beep: a short pure tone</option>
+        </optgroup>
+        <optgroup label="Rich">
+          <option value="cello">Cello: a bowed string, full and held</option>
+          <option value="vibraphone">Vibraphone: a metal bar with a slow shimmer</option>
+        </optgroup>
+        <optgroup label="Sharp">
+          <option value="guitar">Guitar: a bright plucked string</option>
+          <option value="chiptune">Chiptune: a retro game sound, square and buzzy</option>
         </optgroup>
       </select>
       <button type="button" id="sound-listen">Listen</button>
-      <button type="button" id="sound-guide-open">Sound guide…</button>
-      <label><input type="checkbox" id="set-pitch_glide" name="pitch_glide"> Clearer pitch: notes slide from the last height and are a little further apart (off: the original sound)</label>
+      <button type="button" id="sound-guide-open">Sound guide and lessons…</button>
+      <label for="set-sound_design">How heights become notes</label>
+      <select id="set-sound_design" name="sound_design">
+        <option value="fitted">Fitted to the graph: the lowest note is the bottom of the graph, the highest its top, however big the numbers; each function has its own sound</option>
+        <option value="original">Original: notes count in units and start again every 10; one sound for every function</option>
+      </select>
+      <label><input type="checkbox" id="set-pitch_glide" name="pitch_glide"> Sliding notes: each note slides in along the curve from the last step (original design: from the last height, notes a little further apart)</label>
       <label><input type="checkbox" id="set-slope_sound" name="slope_sound"> Slope sound in graph mode: a soft second note for the slope after each step (D turns it on or off)</label>
       <label for="set-stereo_width">Stereo: where left and right are</label>
       <select id="set-stereo_width" name="stereo_width">
@@ -343,7 +360,7 @@
         <option value="0.4">Loud</option>
         <option value="0.5">Loudest</option>
       </select>
-      <label for="set-bass_mode">Bass line while playing</label>
+      <label for="set-bass_mode">Bass line while playing (fitted to the graph: always the note itself an octave lower, unless Off)</label>
       <select id="set-bass_mode" name="bass_mode">
         <option value="x-and-y">Follows x and the curve's height</option>
         <option value="x-only">Follows x only</option>
@@ -394,7 +411,7 @@
     <template class="dialog-help"><p>Settings has four tabs: Reading PDFs, Writing, Graph sound and AI add-on. On a tab, Left and Right arrows change tab and Tab goes into it; Ctrl+Tab and Ctrl+Shift+Tab change tab from anywhere. Save keeps the changes on every tab.</p>
       <p>PDFs made with LaTeX (most course notes and homework) are read from their own text, by rules: every equation exactly as printed.
       The AI add-on, when installed, is only for pictures and for pages whose maths is not stored as text.</p>
-      <p>Graph sound, in this order: the sound and how it is heard (the sound, clearer pitch, the slope sound, stereo, the volumes and the bass line), then dots and points of interest, then moving (numbers you hear, the step and the speed).
+      <p>Graph sound, in this order: the sound and how it is heard (the sound, how heights become notes, sliding notes, the slope sound, stereo, the volumes and the bass line), then dots and points of interest, then moving (numbers you hear, the step and the speed).
       Moving through the sounds plays a few notes of each; Listen plays a whole example: up, down, back to zero, then a solid dot and an open dot.
       Every sound uses the same pitch for the same height; only its colour changes.
       Numbers you hear are rounded to the nearest half unless you choose otherwise.</p></template>
@@ -402,7 +419,20 @@
 </dialog>
 
 <dialog id="sound-guide-dialog" aria-labelledby="sound-guide-title">
-  <h2 id="sound-guide-title">Sound guide</h2>
+  <h2 id="sound-guide-title">Sound guide and lessons</h2>
+  <h3 id="lesson-title">Lessons</h3>
+  <p id="lesson-intro">Short lessons, one idea at a time: you hear a sound, then answer a question about it. Start here if the sounds are new to you.</p>
+  <button type="button" id="lesson-start" aria-describedby="lesson-intro">Start the lessons</button>
+  <div id="lesson-box" role="group" aria-labelledby="lesson-title" hidden>
+    <p id="lesson-text"></p>
+    <button type="button" id="lesson-play" aria-describedby="lesson-text">Play</button>
+    <div id="lesson-answers" role="group" aria-label="Your answer" hidden></div>
+    <p id="lesson-result" role="status"></p>
+    <button type="button" id="lesson-again" aria-describedby="lesson-result" hidden>Another one like this</button>
+    <button type="button" id="lesson-next" aria-describedby="lesson-result">Next lesson</button>
+    <button type="button" id="lesson-previous">Previous lesson</button>
+  </div>
+  <h3 id="sound-list-title">Every sound</h3>
   <p>Each button plays one sound of graph mode, with your sound settings.</p>
   <div id="sound-guide-list"></div>
   <h3 id="sound-quiz-title">Test yourself</h3>

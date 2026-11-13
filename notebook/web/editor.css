@@ -131,3 +131,20 @@ math mi.tml-italic { font-style: italic; }
 /* NVDA does not say the comment role, so the word is given to screen readers here: nothing is
    shown, "comment," is read before the comment (CSS alternative text). */
 .comment::before { content: "" / "comment, "; }
+
+/* Drawing on a graph (Ctrl+D in graph mode): the points, the line Enter would add, the menu. */
+.graph-edit { position: absolute; top: .75rem; right: 1rem; }
+.graph-edit[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.graph-mode:not(.editing) .when-editing { display: none; }
+.graph-mode.editing svg { border-color: var(--accent); border-width: 2px; }
+.edit-point { fill: var(--text); stroke: var(--bg); stroke-width: 1.5; }
+.edit-point.active { fill: var(--accent); }
+.edit-point.open { fill: var(--bg); stroke: var(--text); }
+.edit-point.grabbed { stroke: var(--check-line); stroke-width: 3; }
+.edit-guide { stroke: var(--check-line); stroke-width: .7; stroke-dasharray: 2 4; }
+.edit-preview { stroke: var(--check-line); stroke-width: 2; stroke-dasharray: 6 4; }
+.edit-blocked { stroke: var(--check-line); stroke-width: 3; fill: none; }
+.graph-mode svg text.edit-label { font-size: 12px; fill: var(--text); }
+.graph-menu [role="menu"] { display: grid; gap: .3rem; }
+.graph-menu [role="menu"] button { text-align: left; width: 100%; }
+.edit-point.other { fill: var(--muted); }

@@ -59,7 +59,8 @@ function pluckBuffer(ctx, freq, seconds, brightness, decay) {
     out[i] = loop[k];
     loop[k] = decay * 0.5 * (loop[k] + next);
   }
-  if (plucks.size > 300) plucks.clear();
+  // (Each is up to a quarter of a megabyte, and on the fitted scale every height is its own pitch.)
+  if (plucks.size > 60) plucks.clear();
   plucks.set(key, buffer);
   return buffer;
 }
@@ -76,11 +77,16 @@ function pulseWave(ctx, duty = 0.25) {
   return wave;
 }
 
-// An oscillator at a pitch that slides from fromFreq (if given) to freq.
-function tone(ctx, type, freq, fromFreq, when, slide) {
+// An oscillator at a pitch that slides from fromFreq (if given) to freq, or along bend: the
+// pitches of the note on its way here ({ curve, time }, the curve ending at the note itself;
+// an overtone follows the same curve at its own distance).
+function tone(ctx, type, freq, fromFreq, when, slide, bend = null) {
   const osc = ctx.createOscillator();
   if (type instanceof PeriodicWave) osc.setPeriodicWave(type); else osc.type = type;
-  if (fromFreq && Math.abs(fromFreq - freq) > 0.5) {
+  if (bend) {
+    const k = freq / bend.curve[bend.curve.length - 1];
+    osc.frequency.setValueCurveAtTime(bend.curve.map((v) => v * k), when, Math.max(0.02, slide));
+  } else if (fromFreq && Math.abs(fromFreq - freq) > 0.5) {
     osc.frequency.setValueAtTime(fromFreq, when);
     osc.frequency.exponentialRampToValueAtTime(freq, when + slide);
   } else {
@@ -99,12 +105,12 @@ function envelope(ctx, when, attack, peak, end) {
 }
 
 // Several partials ([ratio, level, seconds]) struck together, as a bar or a piano string.
-function struck(ctx, out, freq, fromFreq, when, slide, peak, partials, attack = 0.004) {
+function struck(ctx, out, freq, fromFreq, when, slide, peak, partials, attack = 0.004, bend = null) {
   let longest = 0;
   for (const [ratio, level, seconds] of partials) {
     const f = freq * ratio;
     if (f > 9000) continue;
-    const osc = tone(ctx, 'sine', f, fromFreq ? fromFreq * ratio : null, when, slide);
+    const osc = tone(ctx, 'sine', f, fromFreq ? fromFreq * ratio : null, when, slide, bend);
     const g = envelope(ctx, when, attack, peak * level, seconds);
     osc.connect(g); g.connect(out);
     osc.start(when); osc.stop(when + seconds + 0.05);
@@ -116,8 +122,8 @@ function struck(ctx, out, freq, fromFreq, when, slide, peak, partials, attack = 
 // Plays one note. out: where the sound goes (a stereo panner). length: the step's time in
 // seconds (voices that hold, like the flute, hold for about that long). Returns the time the
 // note is heard for.
-export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.currentTime, length = 0.3, volume = 0.25 }) {
-  const slide = Math.min(0.09, Math.max(0.04, length * 0.25));
+export function playVoice(ctx, out, voice, { freq, fromFreq = null, bend = null, when = ctx.currentTime, length = 0.3, volume = 0.25 }) {
+  const slide = bend ? bend.time : Math.min(0.09, Math.max(0.04, length * 0.25));
   // Higher notes sound louder to the ear: a little less level up high keeps them even.
   const even = Math.pow(330 / Math.max(80, freq), 0.25);
   const peak = volume * even;
@@ -125,12 +131,12 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
     case 'piano': {
       const B = 0.0004; // a real string's overtones are slightly sharp
       const partials = [1, 2, 3, 4, 5, 6].map((n) => [n * Math.sqrt(1 + B * n * n), 0.9 / Math.pow(n, 1.4), Math.max(0.25, 1.4 / Math.sqrt(n) - freq / 2000)]);
-      return struck(ctx, out, freq, fromFreq, when, slide, peak, partials, 0.005);
+      return struck(ctx, out, freq, fromFreq, when, slide, peak, partials, 0.005, bend);
     }
     case 'marimba':
-      return struck(ctx, out, freq, fromFreq, when, slide, peak * 1.1, [[1, 1, 0.55], [3.93, 0.28, 0.09], [9.2, 0.06, 0.03]], 0.003);
+      return struck(ctx, out, freq, fromFreq, when, slide, peak * 1.1, [[1, 1, 0.55], [3.93, 0.28, 0.09], [9.2, 0.06, 0.03]], 0.003, bend);
     case 'kalimba':
-      return struck(ctx, out, freq, fromFreq, when, slide, peak, [[1, 1, 0.9], [5.95, 0.22, 0.12], [2, 0.12, 0.3]], 0.003);
+      return struck(ctx, out, freq, fromFreq, when, slide, peak, [[1, 1, 0.9], [5.95, 0.22, 0.12], [2, 0.12, 0.3]], 0.003, bend);
     case 'vibraphone': {
       // A slow shimmer: the volume swells and fades five times a second.
       const shimmer = ctx.createGain();
@@ -141,7 +147,7 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
       depth.gain.setValueAtTime(0.25, when);
       lfo.connect(depth); depth.connect(shimmer.gain);
       shimmer.connect(out);
-      const t = struck(ctx, shimmer, freq, fromFreq, when, slide, peak * 0.9, [[1, 1, 1.1], [4, 0.22, 0.35], [10, 0.04, 0.08]], 0.006);
+      const t = struck(ctx, shimmer, freq, fromFreq, when, slide, peak * 0.9, [[1, 1, 1.1], [4, 0.22, 0.35], [10, 0.04, 0.08]], 0.006, bend);
       lfo.start(when); lfo.stop(when + t + 0.05);
       return t;
     }
@@ -151,7 +157,9 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
       const seconds = harp ? 1.2 : 0.8;
       const src = ctx.createBufferSource();
       src.buffer = pluckBuffer(ctx, freq, seconds, harp ? 0.55 : 0.75, harp ? 0.998 : 0.994);
-      if (fromFreq && Math.abs(fromFreq - freq) > 0.5) {
+      if (bend) {
+        src.playbackRate.setValueCurveAtTime(bend.curve.map((v) => v / freq), when, slide);
+      } else if (fromFreq && Math.abs(fromFreq - freq) > 0.5) {
         src.playbackRate.setValueAtTime(fromFreq / freq, when);
         src.playbackRate.exponentialRampToValueAtTime(1, when + slide);
       }
@@ -167,7 +175,7 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
     case 'cello': {
       const flute = voice === 'flute';
       const hold = Math.max(0.2, Math.min(0.7, length * 0.9));
-      const osc = tone(ctx, flute ? 'sine' : 'sawtooth', freq, fromFreq, when, slide);
+      const osc = tone(ctx, flute ? 'sine' : 'sawtooth', freq, fromFreq, when, slide, bend);
       // Vibrato: the pitch wavers a little, as a player's does.
       const vib = ctx.createOscillator();
       const vibDepth = ctx.createGain();
@@ -206,7 +214,7 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
     case 'soft-square': {
       const square = voice === 'soft-square';
       const t = Math.max(0.09, Math.min(0.16, length * 0.4));
-      const osc = tone(ctx, square ? 'square' : 'sine', freq, fromFreq, when, Math.min(slide, t * 0.5));
+      const osc = tone(ctx, square ? 'square' : 'sine', freq, fromFreq, when, Math.min(slide, t * 0.5), bend);
       const filter = ctx.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.setValueAtTime(square ? Math.min(3000, freq * 4) : 6000, when);
@@ -223,8 +231,8 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
     case 'chirp': {
       // The whole note is the slide: rising, falling, or level when the height did not change.
       const t = Math.max(0.12, Math.min(0.24, length * 0.55));
-      const osc = tone(ctx, 'sine', freq, fromFreq, when, t * 0.8);
-      const color = tone(ctx, 'triangle', freq * 2, fromFreq ? fromFreq * 2 : null, when, t * 0.8);
+      const osc = tone(ctx, 'sine', freq, fromFreq, when, t * 0.8, bend);
+      const color = tone(ctx, 'triangle', freq * 2, fromFreq ? fromFreq * 2 : null, when, t * 0.8, bend);
       const cg = ctx.createGain();
       cg.gain.setValueAtTime(0.12, when);
       const g = envelope(ctx, when, 0.01, peak, t);
@@ -237,7 +245,7 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
       // 8-bit sound: a raw wave whose volume falls in steps, not smoothly.
       const tri = voice === 'retro-triangle';
       const t = Math.max(0.1, Math.min(0.22, length * 0.5));
-      const osc = tone(ctx, tri ? 'triangle' : pulseWave(ctx), freq, fromFreq, when, Math.min(slide, 0.05));
+      const osc = tone(ctx, tri ? 'triangle' : pulseWave(ctx), freq, fromFreq, when, Math.min(slide, 0.05), bend);
       const g = ctx.createGain();
       const level = peak * (tri ? 1.1 : 0.75);
       const steps = 6;
@@ -264,7 +272,7 @@ export function playVoice(ctx, out, voice, { freq, fromFreq = null, when = ctx.c
       // The note, then its octave a moment later: same note name, so the height stays clear.
       const t = 0.07;
       [[freq, fromFreq, 0], [freq * 2, null, t]].forEach(([f, from, at]) => {
-        const osc = tone(ctx, 'square', f, from, when + at, Math.min(slide, 0.04));
+        const osc = tone(ctx, 'square', f, from, when + at, Math.min(slide, 0.04), at ? null : bend);
         const filter = ctx.createBiquadFilter();
         filter.type = 'lowpass';
         filter.frequency.setValueAtTime(Math.min(4000, f * 3), when);

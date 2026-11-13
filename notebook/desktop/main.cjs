@@ -115,7 +115,8 @@ function buildMenu() {
     ] },
     { label: '&Insert', submenu: [
       { label: '&Equation…', accelerator: 'Alt+=', click: send('insertEquation') },
-      { label: '&Graph from equations…', accelerator: 'Ctrl+Shift+G', click: send('insertGraph') },
+      { label: '&Graph from equations…', click: send('insertGraph') },
+      { label: 'Graph to &draw on', accelerator: 'Ctrl+Shift+G', click: send('drawGraph') },
       { label: '&Table', submenu: [
         { label: '&Insert table…', click: send('insertTable') },
         { label: 'Add &row below', click: send('tableAddRow') },
@@ -153,8 +154,10 @@ function buildMenu() {
       { type: 'separator' },
       { label: '&Graph', submenu: [
         { label: '&Explore graph by sound', accelerator: 'Ctrl+G', click: send('exploreGraph') },
+        { label: 'Dra&w on the graph (Ctrl+D)', click: send('editGraph') },
         { label: '&Copy graph as LaTeX (pgfplots)', click: send('copyGraphLatex') },
         { type: 'separator' },
+        { label: 'Men&u of everything in graph mode (Ctrl+Enter there)', click: send('graphMenu') },
         { label: '&Play or stop (Space in graph mode)', click: send('graphPlay') },
         { label: 'Ne&xt point of interest (period)', click: send('graphNextPoint') },
         { label: 'Pre&vious point of interest (comma)', click: send('graphPreviousPoint') },
@@ -164,6 +167,10 @@ function buildMenu() {
         { label: 'S&lope here (S)', click: send('graphSlope') },
         { label: 'Li&mits from the left and right (L)', click: send('graphLimits') },
         { label: 'Slope s&ound on or off (D)', click: send('graphSlopeSound') },
+        { label: 'Lowest a&nd highest note (N)', click: send('graphScale') },
+        { label: 'Difference from the function before (minus)', click: send('graphDifference') },
+        { label: 'Add the &tangent line here (T)', click: send('graphTangent') },
+        { label: 'Add a secant line through this point and another…', click: send('graphSecant') },
         { label: 'Change the &step size (F)', click: send('graphStep') },
         { label: '&Back to the document (Escape)', click: send('graphClose') },
       ] },
@@ -190,8 +197,8 @@ function buildMenu() {
     ] },
     { label: '&Help', submenu: [
       { label: '&Keyboard shortcuts', accelerator: 'F1', click: send('keys') },
-      { label: '&User guide', click: () => shell.openPath(path.join(NOTEBOOK, 'README.md')) },
-      { label: 'Sound &guide', click: send('soundGuide') },
+      { label: '&User guide', click: () => openGuide() },
+      { label: 'Sound &guide and lessons', click: send('soundGuide') },
       { type: 'separator' },
       { label: '&Settings…', accelerator: 'Ctrl+,', click: send('settings') },
       { label: '&Check for updates…', click: () => checkForUpdate(true) },
@@ -302,6 +309,41 @@ function registerFileHandlers(recovery) {
   });
 }
 
+// ---------- the user guide ----------
+// Help > User guide: README.md (or the changelog) as a page of its own with real headings, in a
+// window beside the document, so Alt+Tab goes between the two. Only these two files can be read.
+const GUIDE_FILES = ['README.md', 'CHANGELOG.md'];
+let guideWin = null;
+
+function guideText(name) {
+  if (!GUIDE_FILES.includes(name)) throw new Error('Not part of the guide.');
+  return fs.readFileSync(path.join(NOTEBOOK, name), 'utf8').replace(/<!-- dev -->[\s\S]*?<!-- \/dev -->\n?/g, '');
+}
+
+function openGuide(name = 'README.md', hash = '') {
+  if (guideWin && !guideWin.isDestroyed()) {
+    guideWin.webContents.send('guide-show', name, hash);
+    if (!TESTING) { guideWin.show(); guideWin.focus(); }
+    return guideWin;
+  }
+  guideWin = new BrowserWindow({
+    width: 1000, height: 850, title: 'Math Notebook user guide', show: false, autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  guideWin.removeMenu();
+  const openOutside = (url) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); };
+  guideWin.webContents.on('will-navigate', (event, url) => { event.preventDefault(); openOutside(url); });
+  guideWin.webContents.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: 'deny' }; });
+  guideWin.on('closed', () => { guideWin = null; if (win && !win.isDestroyed() && !TESTING) win.focus(); });
+  guideWin.loadURL(`${serverUrl}guide.html?file=${encodeURIComponent(name)}`)
+    .then(() => { if (hash) guideWin?.webContents.send('guide-show', name, hash); if (!TESTING) guideWin?.show(); })
+    .catch(() => {});
+  return guideWin;
+}
+global.openGuide = openGuide; // used by tests
+ipcMain.handle('guide-read', (_event, name) => guideText(String(name)));
+ipcMain.on('guide-close', () => guideWin?.close());
+
 async function createWindow() {
   win = new BrowserWindow({
     width: 1200, height: 900, title: 'Math Notebook', show: false,
@@ -353,6 +395,8 @@ async function createWindow() {
       closing = false;
     }
   });
+  // The guide goes with the document's window (the app ends when both are closed).
+  win.on('closed', () => { if (guideWin && !guideWin.isDestroyed()) guideWin.destroy(); });
   win.webContents.on('render-process-gone', (_event, { reason }) => {
     if (reason === 'clean-exit' || closing) return;
     win.reload();

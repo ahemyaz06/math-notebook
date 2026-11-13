@@ -1,68 +1,139 @@
 # Math Notebook
 
-A Windows notebook for blind students doing maths with NVDA and MathCAT. Use the keyboard
-to write notes and homework, enter equations, and explore graphs by sound. You can import
-course PDFs and LaTeX files and export your work as Word or PDF.
+A Windows notebook for doing maths with a screen reader. It works like Word and is made for
+NVDA and MathCAT. You can:
 
-Everything runs on your own computer. Nothing is sent anywhere, except one question to GitHub
-when you check for a newer version (below), and, only if you install Tectonic for the optional
-equation check, Tectonic's own one-time download of TeX packages. It is a personal project of
-one student, made for one calculus course first; see "What is tested and what is not" before
-relying on it.
+- write notes and homework, typing equations as plain text, such as `(x^2 - 4)/(x - 2)`;
+- check each step of your work against the line above (it never gives the answer);
+- explore graphs by sound, and draw your own graphs with the keyboard;
+- open course PDFs and LaTeX files as real, readable maths;
+- hand in your work as Word, PDF or braille.
 
-## In this README
+Everything runs on your own computer, without AI unless you add it. It is a beta made by one
+student, built first for one calculus course, so read [What has been tested](#what-has-been-tested)
+before relying on it. The [changelog](notebook/CHANGELOG.md) lists what is new in 0.8.0.
 
-- [Download it for Windows](#download-it-windows)
-- [Run from source](#running-from-this-folder-windows)
-- [First minutes with NVDA](#first-minutes-in-the-notebook-with-nvda)
-- [Optional AI add-on](#the-optional-ai-add-on)
-- [PDF equation checking](#checking-equations-with-tectonic-optional)
-- [Braille export](#braille)
-- [What has been tested](#what-is-tested-and-what-is-not)
+## Download
+
+Get it from the [Releases page](https://github.com/ahemyaz06/math-notebook/releases), for 64-bit
+Windows 10 or 11. There are two versions; both read course PDFs made with LaTeX without any AI.
+
+- **Math-Notebook-Setup.exe** installs it, with a Start menu shortcut and an uninstaller. It
+  installs for you only (no administrator needed) unless you choose all users. A newer setup
+  installs over the old one and keeps your settings.
+- **Math-Notebook-portable.zip** needs no install. Extract it anywhere, even a USB stick, and run
+  `Math Notebook.exe`. Your settings stay in a `data` folder beside it.
+
+The app is not code-signed, so Windows may warn you:
+
+- "Windows protected your PC": choose **More info**, then **Run anyway**.
+- "The publisher could not be verified": choose **Run**.
+
+`SHA256SUMS.txt` in each release lets you check that the files are the ones published.
+
+Updates are never installed by themselves. Help > Check for updates tells you when a newer version
+is out and opens its download page; Help > Settings > Writing can check at every start.
+
+## Your first ten minutes
+
+1. Open Math Notebook. The cursor is in an empty document, and NVDA stays in focus mode, as in Word.
+2. Type `y = x^2 - 4` and press **Ctrl+Shift+E**. It becomes a real equation.
+3. Press **Ctrl+G** on it. Graph mode opens: **Space** plays the curve, **J** and **K** step along
+   it, **I** describes it, **Escape** goes back.
+4. Press **Shift+Enter** to copy the equation down, change it, and press **F9**: you hear whether
+   the new line is still the same maths.
+5. Press **Ctrl+S** to save, or **Ctrl+Shift+W** for a Word file to hand in.
+6. Open **Help > Sound guide and lessons** to learn the graph sounds, one idea at a time.
+
+**F1** lists every key. Every command is also in the menus (press **Alt**). The full guide is in
+the app under Help > User guide, and here: [notebook/README.md](notebook/README.md).
+
+## Optional extras
+
+None of these are needed. Each is installed separately.
+
+### The AI add-on (not in the portable version)
+
+It describes pictures and reads pages whose maths is not stored as text (scans, and textbooks that
+draw their formulas). It can misread details, so what it writes is checked against the PDF's own
+text where possible. It needs a graphics card with about 8 GB of memory, and the model is loaded
+only while it is needed.
+
+When running from source (below), the first command gets the runner and the Qwen3-VL-8B model. The
+second is optional and adds Qwen3.5-9B (about 6.6 GB):
+
+```
+.\recognition-lab\.venv\Scripts\python.exe recognition-lab\download_vlm.py
+.\recognition-lab\.venv\Scripts\python.exe recognition-lab\download_qwen35_9b.py
+```
+
+Then choose the model in Help > Settings > AI add-on.
+
+### Checking PDF equations with Tectonic
+
+For PDF pages read without AI, the notebook can use [Tectonic](https://tectonic-typesetting.github.io/)
+to typeset each equation again and compare it with the page, which catches and corrects some
+misreadings. Install Tectonic
+([installation](https://tectonic-typesetting.github.io/book/latest/installation/), or the Windows
+zip from its [releases page](https://github.com/tectonic-typesetting/tectonic/releases)), then put
+`tectonic.exe` on your PATH or set the environment variable `TECTONIC` to its full path. The switch
+is Help > Settings > Reading PDFs > Check each equation.
+[More in the guide](notebook/README.md#checking-pdf-equations-with-tectonic-optional).
+
+### Braille
+
+File > Export > Braille (BRF) makes a braille ready file with
+[BrailleBlaster](https://www.brailleblaster.org/) (free, from the American Printing House). Every
+equation goes to it as MathML. For Nemeth maths, choose UEB with Nemeth in BrailleBlaster's
+Translation settings. The approach follows Owen Petronick's Braille Check.
+
+## What has been tested
+
+- **Automatic tests** drive the real app with key presses and check what it does and says. They
+  also check the maths conversions, graphs, Word equations, PDF reading, and the portable and
+  installed copies. They cannot hear a screen reader.
+- **Used every day with NVDA and MathCAT** by the author, a blind student, for real coursework.
+- **Only one computer**: Windows 11 with NVDA, MathCAT and Access8Math, in US English. JAWS,
+  Narrator, other languages, macOS and Linux have not been tried.
+- **Course material**: the PDF reader was built and checked on one calculus course's LaTeX PDFs and a
+  few textbooks. PDFs made other ways (Word, scans) are less sure, and an unusual layout can be read
+  wrongly without a warning.
+- **Tectonic check**: tried with Tectonic 0.17.0 on 868 equations from one course (863 matched,
+  1 corrected, 4 misreadings caught but not corrected). It does not help with PDFs made by Word or
+  scanned.
+- **Braille**: tried with BrailleBlaster 3.2.5. It has been read back by a program, not yet by a
+  braille reader.
+
+The full list is in the guide, under
+[What does not work yet, and what is not tested](notebook/README.md#what-does-not-work-yet-and-what-is-not-tested).
+
+## Privacy
+
+- Nothing about you or your documents leaves your computer.
+- The app goes online only to check for a newer version, when you choose Help > Check for updates
+  or at each start if you turned that on. It asks GitHub's public "latest release" address once.
+- If you install Tectonic, Tectonic itself downloads the TeX packages it needs the first time it
+  runs. Your equations are typeset on your computer.
+- The app listens only on this computer (127.0.0.1) and refuses requests from websites. Imported
+  documents and pasted text are filtered before they reach the editor.
+- Spelling uses Windows' own spell checker; Add to dictionary adds the word to your Windows
+  dictionary, which Word and Edge use too.
+- Settings and imported PDFs are kept in `%LOCALAPPDATA%\MathNotebook` (installed, or running from
+  source), or in the `data` folder beside the portable copy's exe.
 
 ## What is in this repository
 
-| Folder | What it is | Who it is for |
-|---|---|---|
-| [`notebook/`](notebook/README.md) | **Math Notebook**, the main app: the editor, PDF and LaTeX import, graphs, Word and PDF export, teacher mode | Students and teachers |
-| [`sound-lab/`](sound-lab/README.md) | **Sound Lab**: the graph sounds and graph maths on their own, to try and tune the sounds. The notebook uses its engine. | Trying sounds; developers |
-| [`recognition-lab/`](recognition-lab/README.txt) | **Recognition Lab**: reads graphs from pictures and PDF pages. The notebook uses its PDF reading. | Developers |
+- [`notebook/`](notebook/README.md): **Math Notebook**, the app itself.
+- [`sound-lab/`](sound-lab/README.md): **Sound Lab**, the graph sounds on their own, for trying and
+  tuning them. The notebook uses its sound engine.
+- [`recognition-lab/`](recognition-lab/README.txt): **Recognition Lab**, which reads graphs from
+  pictures and PDF pages. The notebook uses its PDF reading.
 
 The notebook needs the other two folders, so keep them together.
 
-The [changelog](notebook/CHANGELOG.md) lists what changed in 0.7.9.
+## Running from source (Windows)
 
-## Download it (Windows)
-
-**This is a beta.** The app is still being built and is updated often; things may change,
-and some parts are not finished or fully tested (see "What is tested and what is not").
-Help > Check for updates asks GitHub whether a newer version is out and offers its download
-page; Help > Settings > Writing can do this each time the app starts (off unless you turn it on).
-Nothing is downloaded or installed by itself: a newer setup is run by you, installs over the
-old one and keeps your settings.
-
-The [Releases page](https://github.com/ahemyaz06/math-notebook/releases) offers an installer
-and a portable zip for 64-bit Windows 10 and 11. Both read supported PDFs without the AI
-add-on. Optional PDF equation checking needs Tectonic, and braille export needs BrailleBlaster;
-both are installed separately.
-
-- `Math-Notebook-Setup.exe` installs it: a Start menu shortcut, an uninstaller in
-  Installed apps, and newer versions install over older ones and keep your settings. It
-  installs for you only (no administrator needed) unless you choose all users.
-- `Math-Notebook-portable.zip` needs no install: unzip it anywhere (even a USB stick) and run
-  `Math Notebook.exe`. Its settings stay in a `data` folder beside it. `Read me first.txt`
-  inside explains how to start and update it.
-
-In either version, choose Help > User guide for the full instructions.
-
-The app is not code-signed, so Windows may warn before it runs the setup or the exe.
-SmartScreen's "Windows protected your PC": choose "More info", then "Run anyway". An "Open
-File - Security Warning" dialog ("The publisher could not be verified"): choose "Run".
-`SHA256SUMS.txt` in each release lets you check that the files are the ones published.
-
-## Running from this folder (Windows)
-
-1. Install [Node.js](https://nodejs.org/) (version 22.12 or newer) and [Python 3.12](https://www.python.org/).
+1. Install [Node.js](https://nodejs.org/) (22.12 or newer) and [Python 3.12](https://www.python.org/).
 2. Open a terminal in this folder and run:
 
    ```
@@ -71,125 +142,16 @@ File - Security Warning" dialog ("The publisher could not be verified"): choose 
    .\recognition-lab\.venv\Scripts\python.exe -m pip install -r recognition-lab\requirements.txt
    ```
 
-3. Start the notebook: `notebook\Start Math Notebook.cmd`.
-   - Sound Lab: `sound-lab\Start Sound Lab.cmd` (needs only Node.js).
-   - Recognition Lab: `recognition-lab\Start Recognition Lab.cmd`.
+3. Start the notebook with `notebook\Start Math Notebook.cmd`. Sound Lab is
+   `sound-lab\Start Sound Lab.cmd` (needs only Node.js), and Recognition Lab is
+   `recognition-lab\Start Recognition Lab.cmd`.
 
-To build both Windows packages after setting up the source, install [Inno Setup 7](https://jrsoftware.org/isinfo.php)
-and run `.\recognition-lab\.venv\Scripts\python.exe notebook\build_release.py`. The installer,
-portable zip and SHA-256 checksums go into `dist`.
+To build both Windows packages, install [Inno Setup 7](https://jrsoftware.org/isinfo.php) and run
+`.\recognition-lab\.venv\Scripts\python.exe notebook\build_release.py`. The installer, portable zip
+and checksums go into `dist`.
 
-## First minutes in the notebook (with NVDA)
-
-- The document is one edit field, as in Word: NVDA stays in focus mode. **Alt** opens the
-  menus, **F1** lists every keyboard shortcut. In a dialog, F1 or its **Help** button explains it.
-- Type maths as plain text, such as `(x^2 - 4)/(x - 2)`, and press **Ctrl+Shift+E** to make it
-  an equation. **Ctrl+Shift+R** reads the current line with its maths spelled out.
-- **Right arrow** into an equation shows it as its plain text: the arrows move one symbol at a
-  time and you can type to change it. When you leave it, it is an equation again.
-- **Ctrl+Z** undoes and **Ctrl+Y** redoes any change, equations included. After a crash, the
-  next start offers to recover unsaved work.
-- Working line by line: **Enter** after an equation starts a new line. **Shift+Enter** (or
-  **F11**) copies the equation above down, ready to change.
-- **F9** checks the line against the equation above it: "Same as the line above", or where
-  they differ ("At x = 1.7 the line above is 7.29 and this line is 3.89"). It compares values,
-  the solutions of equations, inequalities, derivatives, limits and integrals by working them
-  out at fixed numbers; it never gives the answer, and says so when it cannot tell.
-- Comments, as in programming: anything after `#` or `//` stays words beside the equation and
-  never becomes maths: `y = x^2 # the parabola`.
-- Intervals, as written in class: `y = sin x, [0, 2pi]`, `y = sin x on (0, pi]`,
-  `y = x^2 for 0 < x < 1`. On an equation, **Ctrl+Shift+D** adds or changes its interval. Its
-  graph is then only on that interval, with solid and open dots at the ends.
-- **F7** checks spelling, as in Word, with the Windows spell checker; **Alt+F7** goes to the
-  next misspelled word. Equations are not checked.
-- **Ctrl+Shift+G** inserts a graph. On an equation, **Ctrl+G** graphs it. In graph mode:
-  - **J** and **K** step along the curve; **Space** plays it;
-  - **period** and **comma** jump between points of interest (zeros, peaks, holes, corners, dots);
-  - **S** says the slope, **L** the limits from the left and the right, **D** adds a soft
-    second note for the slope after each step;
-  - **I** describes the graph; **Escape** goes back.
-- Help > Sound guide plays every sound with what it means, and has a short quiz.
-- File > Import PDF or Import LaTeX (.tex) opens course files. File > Export > Word document gives
-  real Word equations.
-
-The full guide is [notebook/README.md](notebook/README.md).
-
-## The optional AI add-on
-
-The notebook can read maths from many LaTeX PDFs using the text already in the file.
-The optional AI can read scanned pages or describe pictures. It can miss or misread details
-and needs a graphics card with about 8 GB of memory. The model is loaded only while it is
-needed: it stops 10 minutes after its last use, and when the app closes.
-
-From the main folder, run the first command to get the runner and one model. The second
-command is optional and downloads another model (about 6.6 GB):
-
-```
-.\recognition-lab\.venv\Scripts\python.exe recognition-lab\download_vlm.py
-.\recognition-lab\.venv\Scripts\python.exe recognition-lab\download_qwen35_9b.py
-```
-
-Choose Qwen3-VL-8B or, if you added it, Qwen3.5-9B in Help > Settings > Reading PDFs.
-
-## Checking equations with Tectonic (optional)
-
-For supported PDF pages read without AI, the notebook can use
-[Tectonic](https://tectonic-typesetting.github.io/) to draw the equations again and compare
-them with the page. It can correct some misreadings. Review important equations against the
-original PDF. Install Tectonic separately
-([installation](https://tectonic-typesetting.github.io/book/latest/installation/); for Windows,
-the zip from its [releases page](https://github.com/tectonic-typesetting/tectonic/releases))
-and put `tectonic.exe` on your PATH or set the environment variable `TECTONIC` to its full path.
-The switch is Help > Settings > Reading PDFs, "Check each equation". Details are in the
-[notebook's guide](notebook/README.md#converting-a-pdf).
-
-## Braille
-
-File > Export > Braille (BRF) makes a braille ready file with
-[BrailleBlaster](https://www.brailleblaster.org/) (free, from the American Printing House), which
-has to be installed. Every equation goes to it as MathML; for Nemeth maths, choose UEB with
-Nemeth in BrailleBlaster's Translation settings. The approach follows Owen Petronick's Braille Check.
-
-## What is tested and what is not
-
-- **Automatic tests** drive the real app with key presses and check what it does and says
-  in its status line. They also check the maths conversions, graphs, Word equations, PDF
-  reading, the portable copy and the installed copy. They cannot hear a screen reader.
-- **Heard with NVDA** by the author: writing, equations in focus and browse mode, stepping
-  through an equation, intervals, graph mode and its sounds.
-- **Not yet heard with NVDA**: whether the word "comment" is said before a comment, the
-  Spelling box (F7), the Interval box (Ctrl+Shift+D), the setup's own pages, the newer
-  graph sounds (the instrument, beep and game voices, "clearer pitch" and the Wider stereo
-  choice), undo and redo, and crash recovery.
-- **Tried on one computer only**: Windows 11 with NVDA, MathCAT and Access8Math, US English.
-  Other screen readers (JAWS, Narrator), other languages, and macOS or Linux have not been tried.
-- **Course material**: the PDF reader was built and checked on one calculus course's LaTeX
-  PDFs and a few textbooks. PDFs made other ways (Word, scans) are less sure, and an
-  unusual layout can be read wrongly without a warning.
-- **Checking equations with Tectonic** was tried with Tectonic 0.17.0 on one calculus course's
-  LaTeX PDFs (868 equations: 863 matched as read, 1 corrected, 4 misreadings caught but not
-  corrected) and on thousands of made-up calculus equations. Tectonic is not bundled; it is
-  not useful for PDFs made with Word or scanned.
-- **Braille** was tried with BrailleBlaster 3.2.5 (UEB and UEB with Nemeth); the automatic tests
-  use a stand-in. Seven LaTeX files were read back from their braille by a program, which found
-  the missing list numbers (now fixed). The braille has not been checked by a braille reader.
-- The full list is in the guide's "Limits, and what is not tested".
-
-## Privacy and safety
-
-- The apps listen only on this computer (127.0.0.1) and refuse requests from other websites.
-- The notebook filters imported documents and pasted text before adding them to the editor.
-- The app goes online only to check for a newer version: when you choose Help > Check for
-  updates, or at each start if you turned that on in Help > Settings > Writing. It asks GitHub's public
-  "latest release" address once; nothing about you or your documents is sent.
-- If you install Tectonic for the equation check, Tectonic itself downloads the TeX packages it
-  needs from its own servers the first time it typesets. Your documents are not sent; the
-  equations are typeset on your computer.
-- Spelling uses Windows' own spell checker on this computer; Add to dictionary adds the word
-  to your Windows dictionary, which Word and Edge use too.
-- Settings and read PDFs stay on this computer: in `%LOCALAPPDATA%\MathNotebook` (the installed
-  copy, and running from this folder), or in the `data` folder beside the portable copy's exe. Your own file locations (model
-  files, a PDF folder) can go in `local-paths.json` in this folder; git leaves that file out.
+Your own file locations (model files, a PDF folder) can go in `local-paths.json` in this folder;
+git leaves that file out.
 
 ## Licence
 
