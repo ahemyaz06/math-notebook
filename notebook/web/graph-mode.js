@@ -1,12 +1,15 @@
-// Graph mode: explore a graph by sound, using Sound Lab's engine and math.
+// Graph mode: explore a graph by sound, using Sound Lab's engine; values and limits come from
+// maths.js, the same as F9's.
 // J/K trace the selected function; arrow keys move freely (no bass) and the curve's
 // tone plays when the cursor lands on it; Space plays with the bass and reads the
 // coordinate when it stops; Tab switches functions.
 import { CalculusSoundEngine } from '/sound/sound-engine.js';
-import { compileEquation, detectLandmarks, estimateSide, findStepEvents, formatNumber } from '/sound/graph-math.js';
-import { HIDEABLE, compileFunction, derivativeFunction, describeFunction, exactly, landmarksOf, say, setNumberStyle, spokenLabel } from './graphs.js';
+import { detectLandmarks, findStepEvents, formatNumber } from '/sound/graph-math.js';
+import { sideLimit, sideSlope } from './maths.js';
+import { HIDEABLE, compileFunction, derivativeFunction, describeFunction, exactly, landmarksOf, say, setNumberStyle, setSourceExact, spokenLabel } from './graphs.js';
 import { derivativeOf, drawingsOf, drawnFunction } from './draw.js';
 import { GraphEditor, describeDrawn } from './graph-edit.js';
+import { pointsFunction } from './curve-points.js';
 
 const STEPS = [0.1, 0.25, 0.5, 1];
 // Keys that act once however long they are held (see key()).
@@ -19,12 +22,20 @@ const OTHER_VOICES = ['marimba', 'cello', 'harp', 'flute', 'piano', 'vibraphone'
 const shortName = (f) => { if (f.short) return f.short; const n = f.label.split(/\s*=|,/)[0].trim(); return n.length > 1 ? n : f.label; };
 
 // The line y = m x + c in words: "y = 2x minus 1", "y = minus x plus 3", "y = 4".
-function lineWords(m, c) {
-  const n = (v) => exact(Number(v.toFixed(6)));
-  if (m === 0) return `y = ${n(c)}`;
-  const mx = m === 1 ? 'x' : m === -1 ? 'minus x' : `${n(m)}x`;
-  return c === 0 ? `y = ${mx}` : `y = ${mx} ${c < 0 ? 'minus' : 'plus'} ${n(Math.abs(c))}`;
+// Two decimals, as heights are said ("y = 1.67", not "y = 1.66667"); a number below 0.1 keeps two
+// digits that are not zero (0.002x, not 0x). digits 1: a line measured from a page's points.
+function lineWords(m, c, digits = 2, fine = false) {
+  const round = (v) => (digits < 2 && fine && Math.abs(v) < 0.095 && Math.abs(v) >= 0.005 ? Number(v.toPrecision(1))
+    : Math.abs(v) >= 0.1 || digits < 2 ? Number(v.toFixed(digits)) : Number(v.toPrecision(2))) || 0;
+  const M = round(m), C = round(c);
+  if (M === 0) return `y = ${exact(C)}`;
+  const mx = M === 1 ? 'x' : M === -1 ? 'minus x' : `${exact(M)}x`;
+  return C === 0 ? `y = ${mx}` : `y = ${mx} ${C < 0 ? 'minus' : 'plus'} ${exact(Math.abs(C))}`;
 }
+
+// Is a function known exactly (a formula, a drawing, a line or difference made from those), or
+// measured from the points of a page's drawing?
+const known = (f) => Boolean(f && !f.points && !f.measured);
 
 // A tangent or secant line as a function to trace and to see. spec: { key, kind, m, c, a, b,
 // label, short }. It is traced where it is on the graph (with half a graph's height of room,
@@ -39,7 +50,7 @@ function lineFunction(spec, span) {
   }
   const tidy = (v) => (Math.abs(v) < 1e-12 ? 0 : Number(v.toPrecision(12)));
   return {
-    label: spec.label, short: spec.short, lo, hi, exact: true, line: spec, key: spec.key, owner: spec.key,
+    label: spec.label, short: spec.short, lo, hi, exact: true, measured: Boolean(spec.measured), line: spec, key: spec.key, owner: spec.key,
     limitAt: (x) => ({ defined: true, y: tidy(m * x + c) }),
     landmarks() {
       const out = [];
@@ -73,18 +84,23 @@ function heightRange(f, x0, x1) {
   return ys.at(-1) - ys[0] <= 3 * (inner[1] - inner[0]) + 1e-9 ? [ys[0], ys.at(-1)] : inner;
 }
 
-// Where two functions have the same height, between lo and hi: [{ x, y }]. Nothing when they
-// are the same curve over a stretch (every point would be a crossing).
+// Where two functions have the same height, between lo and hi: [{ x, y, touches }]. touches:
+// they meet there without changing sides (a line that is tangent at a second point too).
+// Where they are one and the same curve over a stretch (a tangent to a straight piece of the
+// curve), no single point of the stretch is a crossing; a crossing elsewhere still is.
 function crossingsOf(f, g, lo, hi) {
   if (!(hi > lo)) return [];
   const N = 800, out = [];
-  const d = (x) => heightAt(f, x) - heightAt(g, x);
-  let prevX = lo, prev = d(lo), same = 0;
-  const add = (x) => { if (!out.length || Math.abs(out.at(-1).x - x) > 1e-6) out.push({ x: Number(x.toFixed(9)), y: heightAt(f, x) }); };
-  if (prev === 0) add(lo);
+  // The same height to the last digits the computer keeps is the same height.
+  const d = (x) => { const a = heightAt(f, x), v = a - heightAt(g, x); return Math.abs(v) <= 1e-12 * (1 + Math.abs(a)) ? 0 : v; };
+  const q = (hi - lo) / (4 * N);
+  const along = (x) => d(x - q) === 0 || d(x + q) === 0;
+  let prevX = lo, prev = d(lo);
+  const add = (x, touches = false) => { if (!out.length || Math.abs(out.at(-1).x - x) > 1e-6) out.push({ x: Number(x.toFixed(9)), y: heightAt(f, x), touches }); };
+  if (prev === 0 && !along(lo)) add(lo);
   for (let i = 1; i <= N; i += 1) {
     const x = lo + ((hi - lo) * i) / N, v = d(x);
-    if (v === 0) { add(x); same += 1; } else if (Number.isFinite(v) && Number.isFinite(prev) && prev !== 0 && Math.sign(v) !== Math.sign(prev)) {
+    if (v === 0) { if (!along(x)) add(x, Math.sign(d(x - q)) === Math.sign(d(x + q))); } else if (Number.isFinite(v) && Number.isFinite(prev) && prev !== 0 && Math.sign(v) !== Math.sign(prev)) {
       let a = prevX, b = x, da = prev;
       for (let k = 0; k < 50; k += 1) { const mid = (a + b) / 2, dm = d(mid); if (!Number.isFinite(dm)) break; if (Math.sign(dm) === Math.sign(da)) { a = mid; da = dm; } else b = mid; }
       const at = (a + b) / 2;
@@ -93,7 +109,7 @@ function crossingsOf(f, g, lo, hi) {
     }
     prevX = x; prev = v;
   }
-  return same > N / 20 || out.length > 40 ? [] : out;
+  return out.length > 40 ? [] : out;
 }
 
 // The difference of two functions as a function to trace: above zero where the first is
@@ -101,7 +117,7 @@ function crossingsOf(f, g, lo, hi) {
 function differenceFunction(f, g, [x0, x1]) {
   const label = `${shortName(f)} minus ${shortName(g)}`;
   return {
-    label, lo: Math.max(f.lo, g.lo), hi: Math.min(f.hi, g.hi), difference: true, key: 'difference', owner: 'difference',
+    label, lo: Math.max(f.lo, g.lo), hi: Math.min(f.hi, g.hi), difference: true, measured: !known(f) || !known(g), key: 'difference', owner: 'difference',
     limitAt(x) {
       const a = f.limitAt(x), b = g.limitAt(x);
       if (a.defined && b.defined) return { defined: true, y: a.y - b.y };
@@ -111,8 +127,8 @@ function differenceFunction(f, g, [x0, x1]) {
     piece(x) { return (f.piece ? f.piece(x) : 0) * 1000 + (g.piece ? g.piece(x) : 0); },
     isContinuousBetween: (a, b) => unbroken(f, a, b) && unbroken(g, a, b),
     landmarks() {
-      return crossingsOf(f, g, Math.max(this.lo, x0), Math.min(this.hi, x1)).map(({ x }) => ({ kind: 'crossing', x, y: 0,
-        label: `zero at x = ${say(x)}: ${shortName(f)} and ${shortName(g)} cross` }));
+      return crossingsOf(f, g, Math.max(this.lo, x0), Math.min(this.hi, x1)).map(({ x, touches }) => ({ kind: 'crossing', x, y: 0,
+        label: `zero at x = ${say(x)}: ${shortName(f)} and ${shortName(g)} ${touches ? 'touch' : 'cross'}` }));
     },
   };
 }
@@ -125,6 +141,7 @@ const MOVE_SPEECH_MS = 120;
 const exact = (n) => formatNumber(Math.abs(n) < 1e-9 ? 0 : n).replace('-', 'minus ');
 // Numbers inside a stored description, rounded the same way (descriptions without a formula).
 // A dot in words, numbers rounded; what the stored words say it is (a jump, a hole) is kept.
+const escapeText = (text) => String(text).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 function dotWords(p) {
   const [x, y] = p.coordinate;
   const dot = `${p.kind} at ${say(x)}, ${say(y)}`;
@@ -139,81 +156,126 @@ const roundWords = (text) => text.replace(/(minus )?(\d+(?:\.\d+)?(?:e(?:minus |
   return Number.isFinite(v) ? say(v) : m;
 });
 
-// A slope in words, to one decimal: "slope 2, rising", "flat, slope 0".
-function slopeWords(m, about = '') {
+// A slope in words: "slope 2, rising", "flat, slope 0". Two decimals (a slope of 0.25 is not
+// "0.3"), and a small slope that is not 0 keeps two digits (0.0002 is not "flat"). digits 1: a
+// slope measured from a page's points.
+function slopeWords(m, about = '', digits = 2, fine = false) {
   if (!Number.isFinite(m)) return `vertical, going straight ${m > 0 ? 'up' : 'down'}`;
-  if (Math.abs(m) > 1000) return `${about}nearly vertical, ${m > 0 ? 'rising' : 'falling'} very steeply`;
-  const r = Math.round(m * 10) / 10;
+  if (Math.abs(m) > 1e6) return `${about}nearly vertical, ${m > 0 ? 'rising' : 'falling'} very steeply`;
+  // fine: measured from points known to four decimals. A gentle slope there is still a slope
+  // (e^x at minus 3 rises with slope 0.05; it is not flat).
+  const gentle = digits < 2 && fine && Math.abs(m) < 0.095 && Math.abs(m) >= 0.005;
+  const r = (gentle ? Number(m.toPrecision(1)) : Math.abs(m) >= 0.1 || digits < 2 ? Math.round(m * 10 ** digits) / 10 ** digits : Math.abs(m) < 1e-9 ? 0 : Number(m.toPrecision(2))) || 0;
   if (r === 0) return `flat, slope ${about}0`;
-  const how = Math.abs(r) < 0.5 ? ' gently' : Math.abs(r) > 3 ? ' steeply' : '';
+  const how = Math.abs(r) < 0.5 ? ' gently' : Math.abs(r) > 1000 ? ' very steeply' : Math.abs(r) > 3 ? ' steeply' : '';
   return `slope ${about}${formatNumber(r).replace('-', 'minus ')}, ${r > 0 ? 'rising' : 'falling'}${how}`;
 }
 
-// A function made from the exact points the PDF reader found (straight pieces or samples).
-function sampledFunction(curve, dots = []) {
-  // Samples may have null between pieces (a student copy's curve breaks at a jump or an
-  // asymptote); between pieces there is no point.
-  const segments = [[]];
-  for (const p of curve.corners || curve.samples || []) {
-    if (p === null) { if (segments.at(-1).length) segments.push([]); } else segments.at(-1).push({ x: p[0], y: p[1] });
-  }
-  const pieces = segments.filter((s) => s.length).map((s) => s.sort((a, b) => a.x - b.x));
-  const lo = pieces[0]?.[0].x ?? 0, hi = pieces.at(-1)?.at(-1).x ?? 0;
+// The two sides of a corner in words. Sides measured from a page's points that one decimal would
+// make sound the same (0.95 and 1.05, both "slope 1") get two decimals, so a corner never
+// sounds like one slope.
+function sidesWords(left, right, about = '', digits = 2, fine = false) {
+  const close = Number.isFinite(left) && Number.isFinite(right) && Math.abs(Math.round(left * 10) - Math.round(right * 10)) <= 1;
+  const d = close ? 2 : digits;
+  return [slopeWords(left, about, d, fine), slopeWords(right, about, d, fine)];
+}
+// Are a measured function's points known finely (read from a PDF with four decimals)?
+const finePoints = (f) => Boolean(f && f.rounding > 0 && f.rounding <= 0.001);
+// A cusp: the slope goes to minus infinity on one side and to infinity on the other (y = x^(2/3)
+// at 0), a sharp point, not a corner with two slopes.
+const isCusp = (left, right) => !Number.isFinite(left) && !Number.isFinite(right) && left !== null && right !== null && Math.sign(left) !== Math.sign(right);
+const cuspWords = (left) => `a cusp, a sharp point: the curve comes in going straight ${left > 0 ? 'up' : 'down'} and leaves going straight ${left > 0 ? 'down' : 'up'}`;
+
+// A function made from the points the PDF reader found (straight pieces or samples): one curve,
+// or several of one colour that follow each other along x (the pieces of one function, drawn
+// apart at a jump or an asymptote). The measuring is in curve-points.js.
+function sampledFunction(curves, dots = [], span = null, asymptotes = []) {
+  const f = pointsFunction(curves, dots, span, asymptotes);
+  const named = new Set(curves.flatMap((c) => c.asymptotes || []));
   return {
-    label: curve.label && curve.color ? `${curve.label}, ${curve.color}` : curve.label || `${curve.color} ${curve.kind === 'curve' ? 'curve' : 'line'}`,
-    lo, hi,
-    // Which piece x is on, so the picture lifts its pen between pieces (a jump).
-    piece(x) { return pieces.findIndex((s) => x >= s[0].x - 1e-9 && x <= s.at(-1).x + 1e-9); },
-    limitAt(x) {
-      // Where two pieces meet (a jump), the drawn dots say which height is the point: the
-      // solid dot's, and an open dot's height is only approached.
-      const here = pieces.filter((s) => x >= s[0].x - 1e-9 && x <= s.at(-1).x + 1e-9);
-      const ends = here.map((s) => (Math.abs(s[0].x - x) < 1e-9 ? s[0].y : Math.abs(s.at(-1).x - x) < 1e-9 ? s.at(-1).y : null)).filter((v) => v !== null);
-      const dotAt = (kind) => dots.find((d) => d.kind === kind && Math.abs(d.coordinate[0] - x) < 1e-9 && ends.some((v) => Math.abs(v - d.coordinate[1]) < 1e-6));
-      if (ends.length) {
-        const solid = dotAt('solid dot');
-        if (solid) return { defined: true, y: solid.coordinate[1] };
-        const open = dotAt('open dot');
-        const other = ends.find((v) => !open || Math.abs(v - open.coordinate[1]) >= 1e-6);
-        if (open && other === undefined) return { defined: false, hole: true, y: open.coordinate[1] };
-        if (open) return { defined: true, y: other };
-      }
-      const pts = here[0];
-      if (!pts || (pts.length < 2 && Math.abs(pts[0].x - x) > 1e-9)) return { defined: false, hole: false, y: NaN };
-      let k = pts.findIndex((p) => p.x >= x);
-      if (k <= 0) return { defined: true, y: pts[0].y };
-      const a = pts[k - 1], b = pts[k];
-      const y = b.x === a.x ? b.y : a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);
-      return { defined: true, y };
-    },
+    ...f,
     landmarks() {
       const out = [];
-      for (const t of curve.turning_points || []) out.push({ kind: t.kind === 'peak' ? 'maximum' : 'minimum', x: t.at[0], y: t.at[1], label: `${t.kind} at ${say(t.at[0])}, ${say(t.at[1])}` });
-      const roots = [...(curve.crosses_x_axis_at || []).map((x) => ({ x, touches: false })),
-        ...(curve.touches_x_axis_at || []).map((x) => ({ x, touches: true }))];
-      for (const { x, touches } of roots) out.push({ kind: x === 0 ? 'origin' : 'x-axis', x, y: 0, touches,
-        label: (touches ? 'touches' : 'crosses') + ' the x-axis at ' + say(x) });
-      if (Number.isFinite(curve.crosses_y_axis_at) && !roots.some(({ x }) => x === 0)) {
-        out.push({ kind: 'y-axis', x: 0, y: curve.crosses_y_axis_at, label: `crosses the y-axis at ${say(curve.crosses_y_axis_at)}` });
-      }
-      for (const a of curve.asymptotes || []) out.push({ kind: 'asymptote', x: a, y: null, label: `vertical asymptote at x = ${say(a)}` });
-      for (const sh of curve.shapes || []) out.push({ ...sh, x: sh.at[0], y: sh.at[1] });
-      if (curve.kind !== 'curve') {
-        const c = curve.corners || [];
-        for (let i = 1; i < c.length - 1; i += 1) {
-          if (!c[i - 1] || !c[i] || !c[i + 1]) continue; // a break between pieces is no corner
-          const [x, y] = c[i];
-          out.push({ kind: 'corner', x, y, slopeLeft: (y - c[i - 1][1]) / (x - c[i - 1][0]), slopeRight: (c[i + 1][1] - y) / (c[i + 1][0] - x), label: `corner at ${say(x)}, ${say(y)}` });
+      for (const curve of curves) {
+        for (const t of curve.turning_points || []) out.push({ kind: t.kind === 'peak' ? 'maximum' : 'minimum', x: t.at[0], y: t.at[1], label: `${t.kind} at ${say(t.at[0])}, ${say(t.at[1])}` });
+        const roots = [...(curve.crosses_x_axis_at || []).map((x) => ({ x, touches: false })),
+          ...(curve.touches_x_axis_at || []).map((x) => ({ x, touches: true }))];
+        // Straight pieces read before the reader gave them their zeros: found here, from the corners.
+        if (curve.corners && !curve.crosses_x_axis_at) {
+          curve.corners.forEach(([xa, ya], k) => {
+            const next = curve.corners[k + 1];
+            if (!next || xa === next[0] || (ya === 0 && next[1] === 0)) return;
+            // (An end lying on the axis is the end of the line, not a crossing.)
+            const x = ya === 0 ? (k > 0 ? xa : null) : ya * next[1] < 0 ? xa + ((next[0] - xa) * ya) / (ya - next[1]) : null;
+            if (x !== null && !roots.some((r) => Math.abs(r.x - x) < 0.02)) roots.push({ x: Math.round(x * 100) / 100 || 0, touches: false });
+          });
         }
+        for (const { x, touches } of roots) out.push({ kind: x === 0 ? 'origin' : 'x-axis', x, y: 0, touches,
+          label: (touches ? 'touches' : 'crosses') + ' the x-axis at ' + say(x) });
+        if (Number.isFinite(curve.crosses_y_axis_at) && !roots.some(({ x }) => x === 0)) {
+          out.push({ kind: 'y-axis', x: 0, y: curve.crosses_y_axis_at, label: `crosses the y-axis at ${say(curve.crosses_y_axis_at)}` });
+        }
+        for (const sh of curve.shapes || []) out.push({ ...sh, x: sh.at[0], y: sh.at[1] });
+      }
+      // Where the function crosses the y-axis, when the reader did not say (older imports).
+      const atZero = f.limitAt(0);
+      if (atZero.defined && !atZero.away && !out.some((l) => l.kind === 'y-axis' || l.kind === 'origin' || (l.x === 0 && ['x-axis'].includes(l.kind)))) {
+        const y = Math.round(atZero.y * 100) / 100 || 0;
+        out.push(y === 0 ? { kind: 'origin', x: 0, y: 0, touches: false, label: 'crosses the x-axis at 0' } : { kind: 'y-axis', x: 0, y, label: `crosses the y-axis at ${say(y)}` });
+      }
+      // An asymptote that lies past the end of the curve (tan x is drawn up to the top of the
+      // grid, the dashed line stands a little further on) is said where the curve leaves the graph.
+      for (const end of [f.lo, f.hi]) {
+        const a = f.asymptoteToward(end);
+        if (a !== null && (a < f.lo - 1e-9 || a > f.hi + 1e-9)) out.push({ kind: 'edge', x: end, y: heightAt(f, end), label: `the curve runs off the graph at ${say(end)}, ${say(heightAt(f, end))}, towards the vertical asymptote at x = ${say(a)}` });
+      }
+      // An asymptote the record names, or a dashed vertical line the curve runs off the graph beside.
+      for (const a of new Set([...named, ...f.asymptotesBeside()])) out.push({ kind: 'asymptote', x: a, y: null, label: `vertical asymptote at x = ${say(a)}` });
+      // Corners: where straight pieces meet, and a sharp corner found in a smooth curve's points.
+      for (const c of f.cornersOf()) {
+        if (out.some((l) => l.kind === 'corner' && Math.abs(l.x - c.x) < 0.02)) continue;
+        if (c.left === null || c.right === null) continue;
+        out.push({ kind: 'corner', x: c.x, y: c.y, slopeLeft: c.left, slopeRight: c.right, label: `corner at ${say(c.x)}, ${say(c.y)}` });
       }
       return out;
     },
   };
 }
 
+// The curves of a graph read from a page, as functions: curves of one colour (and one name)
+// that do not lie over each other along x are the pieces of one function. Vertical lines are
+// not functions of x; a dashed one may be an asymptote. Returns [{ curves, index }].
+function groupCurves(curves, span) {
+  const groups = [];
+  const slack = 0.02 * (span.x[1] - span.x[0]);
+  curves.forEach((c, index) => {
+    const pts = (c.corners || c.samples || []).filter(Boolean);
+    if (!pts.length) return;
+    const range = [Math.min(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[0]))];
+    const group = groups.find((g) => g.curves[0].color === c.color && Boolean(g.curves[0].dashed) === Boolean(c.dashed) && c.color
+      && (!c.label || !g.label || c.label === g.label) && g.ranges.every((r) => range[0] >= r[1] - slack || range[1] <= r[0] + slack));
+    if (group) { group.curves.push(c); group.ranges.push(range); group.label ||= c.label; } else groups.push({ curves: [c], ranges: [range], label: c.label, index });
+  });
+  for (const g of groups) if (g.label && !g.curves[0].label) g.curves = [{ ...g.curves[0], label: g.label }, ...g.curves.slice(1)];
+  return groups;
+}
+
+// An equation kept as plain text: the estimate Recognition Lab wrote for a graph read from a
+// picture (y=0.5*x^2-2*x+1), read as maths like any other. Recognition Lab is a program, so a
+// number such as 5e-05 is its way of writing 0.00005 (typed by a person it could be 5e - 5, and
+// is asked about). One that is not a function of x (a vertical line, a circle, two pieces
+// joined by ;) is left out, null, instead of stopping the whole graph from opening.
 function equationFunction(text) {
-  const graph = compileEquation(text);
-  return { label: graph.label, lo: -Infinity, hi: Infinity, limitAt: (x) => graph.limitAt(x), graph };
+  const plain = String(text).replace(/(?<![\w.])(\d+(?:\.\d+)?)e([+-]?\d+)(?![\w.])/gi, (n) => decimal(Number(n)));
+  let f;
+  try { f = compileFunction(plain, 'plain'); } catch { return null; }
+  return { label: f.label, lo: -Infinity, hi: Infinity, limitAt: (x) => f.graph.limitAt(x), graph: f.graph, compiled: f };
+}
+// A number written out in full, with no e: 0.00005, 1000000.
+function decimal(n) {
+  if (!Number.isFinite(n)) return String(n);
+  const text = Math.abs(n) < 1 ? n.toFixed(20) : n.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 });
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
 }
 
 // A function written in the document (LaTeX, piecewise too), see graphs.js.
@@ -477,6 +539,7 @@ export class GraphMode {
     // Each function has a key ('drawn:0', 'eq:1', 'd1:eq:1' for a derivative) to select it by,
     // and an owner that its dots carry, so each function sounds only its own dots.
     const made = [], dots = [];
+    setSourceExact(true); // the dots of drawn functions and formulas, said below
     const derivativeName = (n, name) => `${n === 2 ? 'second ' : ''}derivative of ${name}`;
     const ownDots = (f) => f.dots().map((d) => ({ kind: d.kind === 'open dot' ? 'open-point' : 'solid-point', x: d.x, y: d.y, owner: f.owner,
       label: d.jump ? `jump at x = ${say(d.x)}: ${d.kind} at ${say(d.x)}, ${say(d.y)}` : d.hole ? `hole at ${say(d.x)}, ${say(d.y)}`
@@ -494,7 +557,7 @@ export class GraphMode {
         dots.push(...ownDots(f));
       }
     });
-    // Equations, each followed by its derivatives: measured from the curve.
+    // Equations, each followed by its derivatives: worked out by the rules of calculus.
     (graph.functions || []).forEach((g, i) => {
       const f = { ...latexFunction(g), source: i, key: `eq:${i}`, owner: i };
       made.push(f);
@@ -502,13 +565,26 @@ export class GraphMode {
       for (let n = 1; n <= (g.derivative || 0); n += 1) {
         const c = derivativeFunction(f.compiled, n, this.boundary, derivativeName(n, name));
         const key = `d${n}:eq:${i}`;
-        made.push({ label: c.label, lo: -Infinity, hi: Infinity, limitAt: (x) => c.graph.limitAt(x), graph: c.graph, compiled: c, derived: true, of: `eq:${i}`, order: n, key, owner: key });
+        made.push({ label: c.label, short: c.label, lo: -Infinity, hi: Infinity, limitAt: (x) => c.graph.limitAt(x), graph: c.graph, compiled: c, derived: true, byRule: Boolean(c.exact), of: `eq:${i}`, order: n, key, owner: key });
         dots.push(...c.dots.map((p) => ({ kind: 'open-point', x: p.coordinate[0], y: p.coordinate[1], label: dotWords(p), owner: key })));
       }
     });
+    setSourceExact(false);
+    // Curves read from a page. A dot of theirs is said as what it is (a hole, a jump, a value
+    // away from the curve), and belongs to its function.
+    const isVertical = (c) => c.kind !== 'curve' && c.corners?.length === 2 && c.corners[0][0] === c.corners[1][0];
+    this.verticals = (graph.curves || []).filter(isVertical);
+    const dashedLines = this.verticals.filter((c) => c.dashed).map((c) => c.corners[0][0]);
+    const pageDots = new Map();
+    const read = groupCurves((graph.curves || []).filter((c) => !isVertical(c)), span).map((g) => {
+      const key = `curve:${g.index}`;
+      const f = { ...sampledFunction(g.curves, graph.points || [], span, [...dashedLines, ...g.curves.flatMap((c) => c.asymptotes || [])]), key, owner: key };
+      for (const { dot, words } of f.dotKinds()) if (!pageDots.has(dot) || words) pageDots.set(dot, { owner: key, words });
+      return f;
+    });
     this.functions = [
-      ...(graph.curves || []).filter((c) => !(c.kind !== 'curve' && c.corners?.length === 2 && c.corners[0][0] === c.corners[1][0])).map((c, i) => ({ ...sampledFunction(c, graph.points || []), key: `curve:${i}` })),
-      ...(graph.equations || []).map((text, i) => ({ ...equationFunction(text), key: `plain:${i}` })),
+      ...read,
+      ...(graph.equations || []).map((text, i) => { const f = equationFunction(text); return f && { ...f, key: `plain:${i}` }; }).filter(Boolean),
       ...made,
     ];
     // Tangent and secant lines, worked out again from their function (so they follow it when it
@@ -536,9 +612,13 @@ export class GraphMode {
     }
     // Every function's holes and open ends, for the picture.
     this.shapes = this.functions.flatMap((f) => (f.graph ? landmarksOf(f.graph, this.boundary) : []));
-    this.verticals = (graph.curves || []).filter((c) => c.kind !== 'curve' && c.corners?.length === 2 && c.corners[0][0] === c.corners[1][0]);
-    this.dots = [...(graph.points || []).map((p) => ({ kind: p.kind === 'open dot' ? 'open-point' : 'solid-point', x: p.coordinate[0], y: p.coordinate[1],
-      label: dotWords(p), owner: p.function ?? null })), ...dots];
+    this.dots = [...(graph.points || []).map((p) => {
+      const of = pageDots.get(p);
+      return { kind: p.kind === 'open dot' ? 'open-point' : 'solid-point', x: p.coordinate[0], y: p.coordinate[1],
+        label: dotWords(of?.words && !p.label ? { ...p, label: of.words } : p), owner: p.function ?? of?.owner ?? null };
+    }), ...dots];
+    // Letters the page prints beside a curve (a to f in a homework graph), each with its place.
+    this.marks = (graph.marks || []).map((m) => ({ name: m.name, x: m.coordinate[0], y: m.coordinate[1], below: m.side === 'below' }));
     const chosen = select ? this.functions.findIndex((f) => f.key === select) : -1;
     if (chosen >= 0) this.index = chosen;
     this.index = Math.max(0, Math.min(this.index || 0, this.functions.length - 1));
@@ -673,9 +753,13 @@ export class GraphMode {
   prepareFunction(start) {
     const f = this.fn;
     if (!f) { this.landmarks = []; return; }
+    setSourceExact(known(f)); // how this function's heights are said (graphs.js)
     this.sound.setWindow({ x: this.span.x, y: f.pitch || this.span.y });
     let lo = Math.max(f.lo, this.span.x[0]), hi = Math.min(f.hi, this.span.x[1]);
-    const own = f.graph ? landmarksOf(f.graph, this.boundary) : f.landmarks();
+    let own = f.graph ? landmarksOf(f.graph, this.boundary) : f.landmarks();
+    // A derivative measured from its function has its points of interest to about a
+    // ten-thousandth: a valley "at 0.00004" is at 0.
+    if (f.derived && !f.byRule) own = own.map((l) => { const r = Number(l.x.toFixed(3)) || 0; return Math.abs(l.x - r) < 2e-4 && f.limitAt(r).defined === f.limitAt(l.x).defined ? { ...l, x: r } : l; });
     // Only where the curve is: y = 1/x on [-4.5, -0.22] is stepped from -4.5 to -0.22, not
     // across the whole window (that started off the curve, at x = 0, and stuck at the edge).
     const defined = (x) => f.limitAt(x).defined;
@@ -709,13 +793,32 @@ export class GraphMode {
     const touch = (g) => { const [line, other] = f.line ? [f, g] : [g, f]; return line.line?.kind === 'tangent' && line.line.of === other.key ? line.line : null; };
     const crossings = hidden.size || f.difference ? [] : this.functions.filter((g) => g !== f && !g.difference).flatMap((g) => {
       const t = touch(g);
-      const found = crossingsOf(f, g, lo, hi).filter(({ x }) => !t || Math.abs(x - t.a) > 1e-4)
-        .map(({ x, y }) => ({ kind: 'crossing', x, y, label: `crosses ${shortName(g)} at ${say(x)}, ${say(y)}` }));
+      // Beside the point where a tangent touches, the curve and the line stay closer than the
+      // curve is known (the rounding of a page's points; arithmetic for a formula): a change of
+      // sign there is the touching itself, not a crossing.
+      const curve = f.line ? g : f;
+      const close = t ? Math.max(1e-7, 3 * (curve.rounding || 0)) * (1 + Math.abs(t.m)) : 0;
+      const apart = (x) => Array.from({ length: 25 }, (_, i) => t.a + ((x - t.a) * i) / 24).some((u) => Math.abs(heightAt(f, u) - heightAt(g, u)) > close);
+      const found = crossingsOf(f, g, lo, hi).filter(({ x }) => !t || (Math.abs(x - t.a) > 1e-4 && apart(x)))
+        .map(({ x, y, touches }) => ({ kind: 'crossing', x, y, label: `${touches ? 'touches' : 'crosses'} ${shortName(g)} at ${say(x)}, ${say(y)}` }));
       if (t && t.a >= lo - 1e-9 && t.a <= hi + 1e-9) found.push({ kind: 'crossing', x: t.a, y: t.ya, label: `${f.line ? `touches ${shortName(g)}` : `${shortName(g)} touches`} here, at ${say(t.a)}, ${say(t.ya)}` });
       return found;
     });
+    // A bare "jump at x = 0" where this function's own dots already say the jump with its
+    // heights (the derivative of |x|) would be said twice.
+    own = own.filter((l) => !(l.kind === 'jump' && onCurve.some((d) => Math.abs(d.x - l.x) < 1e-6 && /^jump at/.test(d.label))));
     this.landmarks = [...own.map((l) => ({ ...l, label: spokenLabel(l) })), ...onCurve, ...crossings]
-      .filter((l) => !hidden.has(l.kind) && l.x >= lo - 1e-9 && l.x <= hi + 1e-9).sort((a, b) => a.x - b.x);
+      .filter((l) => !hidden.has(l.kind) && l.x >= lo - 1e-9 && l.x <= hi + 1e-9);
+    // A named point on this curve is a point of interest, said by its letter: "point b: valley
+    // at ...". Where nothing else is there, it is one of its own (it has no sound of its own).
+    for (const m of this.marks || []) {
+      const lim = f.limitAt(m.x);
+      if (m.x < lo - 1e-9 || m.x > hi + 1e-9 || !((lim.defined || lim.hole) && Math.abs(lim.y - m.y) < 0.15)) continue;
+      const there = this.landmarks.filter((l) => Math.abs(l.x - m.x) < 1e-6);
+      if (there.length) this.landmarks[this.landmarks.indexOf(there[0])] = { ...there[0], label: `point ${m.name}: ${there[0].label}` };
+      else this.landmarks.push({ kind: 'mark', x: m.x, y: m.y, label: `point ${m.name}, at ${say(m.x)}, ${say(m.y)}` });
+    }
+    this.landmarks.sort((a, b) => a.x - b.x);
     if (start) {
       // At x = 0 when the curve is there, otherwise at the first step on the curve.
       const at = this.onGrid(Math.max(lo, Math.min(hi, 0)));
@@ -832,26 +935,47 @@ export class GraphMode {
     this.speak([...new Set(here.map((l) => l.label))].join('; '));
   }
 
+  // The limit of a function at x from one side: { value }, { infinite: 1 or -1 }, { swings }
+  // (no limit: it does not settle), { uncertain } or null (no curve on that side).
   sideLimit(x, dir, f = this.fn) {
-    return estimateSide((t) => heightAt(f, t), x, dir);
+    if (f.sideAt) return f.sideAt(x, dir); // kept as points: the points and dots decide
+    // The same routine as F9's limits (maths.js), on the heights of the curve.
+    return sideLimit((t) => heightAt(f, t), x, dir);
   }
 
-  // L: the limits at the cursor from the left and the right, and the value there.
+  // L: the limits at the cursor from the left and the right, and the value there. Its numbers
+  // have two decimals whatever Settings asks for (a limit of 0.69 said "0.5" is a wrong answer),
+  // except on a curve measured from a page, which keeps the rounding chosen for it.
   limits() {
     if (!this.fn) return 'No function to read.';
+    return known(this.fn) ? exactly(() => this.limitWords()) : this.limitWords();
+  }
+
+  limitWords() {
     const x = this.tracing ? this.x : this.free.x;
-    const words = (l) => (!l ? 'no limit' : l.uncertain ? 'could not estimate' : l.infinite ? (l.infinite > 0 ? 'goes up to infinity' : 'goes down to minus infinity') : say(l.value));
+    const swing = (l) => (Array.isArray(l.swings) ? `has no limit, it keeps swinging between ${say(l.swings[0])} and ${say(l.swings[1])}` : 'has no limit, it keeps swinging without settling');
+    const words = (l) => (!l ? 'no curve' : l.uncertain ? 'could not estimate' : l.swings ? swing(l) : l.infinite ? (l.infinite > 0 ? 'goes up to infinity' : 'goes down to minus infinity') : say(l.value));
     const left = this.sideLimit(x, -1), right = this.sideLimit(x, 1);
     const here = this.fn.limitAt(x);
     const value = here.defined ? `the value is ${say(here.y)}` : 'there is no point here';
-    const same = left && right && !left.infinite && !right.infinite && Math.abs(left.value - right.value) <= 1e-4 * (1 + Math.abs(left.value));
+    const settled = (l) => l && Number.isFinite(l.value);
+    const same = settled(left) && settled(right) && Math.abs(left.value - right.value) <= 1e-4 * (1 + Math.abs(left.value));
     let verdict;
     if (left?.uncertain || right?.uncertain) verdict = 'Could not estimate the limit reliably.';
+    else if (left?.swings || right?.swings) verdict = 'No limit: the curve does not settle on one height.';
     else if (same) verdict = here.defined && Math.abs(here.y - left.value) <= 1e-4 * (1 + Math.abs(here.y)) ? 'Continuous here.' : here.defined ? 'The limit and the value differ.' : 'A hole: the limit exists, but there is no point.';
     else if (left && right && left.infinite && left.infinite === right.infinite) verdict = 'A vertical asymptote.';
     else if (left && right) verdict = left.infinite || right.infinite ? 'A vertical asymptote: the two sides differ.' : 'No limit: the two sides differ, a jump.';
     else if (left?.infinite || right?.infinite) verdict = 'A vertical asymptote.';
-    else verdict = !left && !right ? 'No curve on either side.' : `The curve is only on the ${left ? 'left' : 'right'}.`;
+    else {
+      // Where a curve read from a page stops with an arrow, or at the edge of the graph, it goes on.
+      const note = this.fn.endNote?.(x);
+      const toward = note === 'edge' ? this.fn.asymptoteToward?.(x) ?? null : null;
+      const more = note === 'arrow' ? ' An arrow shows it goes on past here.'
+        : toward !== null && Math.abs(toward - x) > 1e-6 ? ` It runs off the edge of the graph here, towards the dashed line at x = ${say(toward)}: a vertical asymptote.`
+          : note === 'edge' ? ' It runs off the edge of the graph here.' : '';
+      verdict = !left && !right ? 'No curve on either side.' : `The curve is only on the ${left ? 'left' : 'right'}.${more}`;
+    }
     const sides = same ? `from both sides ${say(left.value)}` : `from the left ${words(left)}, from the right ${words(right)}`;
     return `At x = ${exact(x)}: ${sides}; ${value}. ${verdict}`;
   }
@@ -859,36 +983,65 @@ export class GraphMode {
   // The slope at x from the curve's heights on each side: { slope } where both sides agree,
   // otherwise { left, right } (a corner, a jump or an end), each null where there is none.
   slopeAt(x, f = this.fn) {
-    if (f.derived) return this.measuredSlope(f, x);
+    // A derivative worked out by rule has exact heights, so its slope is measured like any formula's.
+    if (f.derived && !f.byRule) return this.measuredSlope(f, x);
     const y = (t) => { const l = f.limitAt(t); return l.defined ? l.y : NaN; };
     const y0 = y(x);
     if (!Number.isFinite(y0)) return { slope: null, left: null, right: null };
+    // A formula's slope is its derivative by the rules of calculus, where that has a value.
+    // Elsewhere (a corner, a cusp, an end) the two sides are measured, below.
+    const rule = this.ruleOf(f);
+    if (rule) { const exactly = rule.limitAt(x); if (exactly.defined) return { slope: exactly.y, left: exactly.y, right: exactly.y }; }
     const limits = [-1, 1].map((dir) => this.sideLimit(x, dir, f));
     const jump = limits.some((limit) => Number.isFinite(limit?.value) &&
       Math.abs(limit.value - y0) > 1e-6 * (1 + Math.abs(y0)));
     if (jump) return { slope: null, left: null, right: null, jump };
-    const side = (dir) => estimateSide((t) => (y(t) - y0) / (t - x), x, dir, Math.abs(y0) * Number.EPSILON * 2);
-    const estimates = [side(-1), side(1)];
-    if (estimates.some((limit) => limit?.uncertain)) return { slope: null, left: null, right: null, uncertain: true };
-    const [left, right] = estimates.map((limit) => limit?.infinite ? limit.infinite * Infinity : limit?.value ?? null);
+    let left, right;
+    if (f.slopeSides) ({ left, right } = f.slopeSides(x)); // kept as points: fitted through the points around x
+    else {
+      // Each side's slope, the same as F9's (maths.js sideSlope).
+      const estimates = [sideSlope(y, x, y0, -1), sideSlope(y, x, y0, 1)];
+      if (estimates.some((limit) => limit?.uncertain)) return { slope: null, left: null, right: null, uncertain: true };
+      [left, right] = estimates.map((limit) => limit?.infinite ? limit.infinite * Infinity : limit?.value ?? null);
+    }
+    // A formula or a drawing gives its slopes to many digits, so two sides that differ even a
+    // little are a corner (slope 2, then 2.1, has no tangent). Slopes measured from a picture's
+    // points are rougher, so they are allowed more.
+    const tolerance = known(f) ? 1e-3 : 0.02;
     const same = left !== null && right !== null && (left === right ||
-      (Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= 0.02 * (1 + Math.abs(left) + Math.abs(right))));
+      (Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= tolerance * (1 + Math.abs(left) + Math.abs(right))));
     if (same) return { slope: Number.isFinite(left) ? (left + right) / 2 : left, left, right };
     return { slope: null, left, right };
   }
 
-  // S: the slope at the cursor, in words. A graph drawn on the page (no formula) gives an estimate.
+  // The derivative of a function that has a formula (graphs.js works it out by rule), made once.
+  ruleOf(f) {
+    if (!f.compiled?.parts) return null;
+    if (f.rule === undefined || f.ruleBoundary !== this.boundary) {
+      let made = null;
+      try { made = derivativeFunction(f.compiled, 1, this.boundary, ''); } catch { made = null; }
+      f.rule = made?.exact ? made.graph : null;
+      f.ruleBoundary = this.boundary;
+    }
+    return f.rule;
+  }
+
+  // S: the slope at the cursor, in words. A curve measured from a page gives an estimate, to
+  // one decimal; a formula or a drawing gives two.
   slope() {
     if (!this.fn) return 'No function to read.';
     const x = this.tracing ? this.x : this.free.x;
-    const about = this.fn.compiled || this.fn.graph || this.fn.exact ? '' : 'about ';
+    const sure = known(this.fn);
+    const about = sure ? '' : 'about ', digits = sure ? 2 : 1, fine = finePoints(this.fn);
     const { slope, left, right, jump, uncertain } = this.slopeAt(x);
     if (uncertain) return `At x = ${exact(x)}: could not estimate the slope reliably.`;
     if (jump) return `At x = ${exact(x)}: no single slope, the curve jumps here.`;
-    if (slope !== null) return `At x = ${exact(x)}: ${slopeWords(slope, about)}.`;
+    if (slope !== null) return `At x = ${exact(x)}: ${slopeWords(slope, about, digits, fine)}.`;
     if (left === null && right === null) return `At x = ${exact(x)}: no slope, there is no point here.`;
-    if (left === null || right === null) return `At x = ${exact(x)}: the curve ${left === null ? 'starts' : 'ends'} here; from the ${left === null ? 'right' : 'left'}, ${slopeWords(left ?? right, about)}.`;
-    return `At x = ${exact(x)}: no single slope, a corner. From the left, ${slopeWords(left, about)}; from the right, ${slopeWords(right, about)}.`;
+    if (left === null || right === null) return `At x = ${exact(x)}: the curve ${left === null ? 'starts' : 'ends'} here; from the ${left === null ? 'right' : 'left'}, ${slopeWords(left ?? right, about, digits, fine)}.`;
+    if (isCusp(left, right)) return `At x = ${exact(x)}: no slope, ${cuspWords(left)}.`;
+    const [l, r] = sidesWords(left, right, about, digits, fine);
+    return `At x = ${exact(x)}: no single slope, a corner. From the left, ${l}; from the right, ${r}.`;
   }
 
   describe() {
@@ -922,7 +1075,9 @@ export class GraphMode {
     this.index = (this.index + (back ? this.functions.length - 1 : 1)) % this.functions.length;
     const keepX = this.tracing ? this.x : this.free.x;
     this.prepareFunction(false);
-    this.x = this.onGrid(Math.max(this.lo, Math.min(this.hi, keepX)));
+    // The same x, not the nearest step: Tab from a curve to its tangent at x = 0.25 stays on the
+    // point where they touch (the next J or K goes back onto the steps).
+    this.x = Math.max(this.lo, Math.min(this.hi, keepX));
     this.tracing = true;
     this.editor.follow();
     this.speak(`${this.fn.label}${this.ownScale ? ', on its own scale' : ''}. ${this.where()}`);
@@ -955,12 +1110,19 @@ export class GraphMode {
     if (entry.kind === 'tangent') m = this.slopeAt(entry.a, f).slope;
     else { yb = heightAt(f, entry.b); m = (yb - ya) / (entry.b - entry.a); }
     if (typeof m !== 'number' || !Number.isFinite(m)) return null;
-    m = Number(m.toFixed(6)) || 0;
-    const c = Number((ya - m * entry.a).toFixed(6)) || 0;
+    // The line goes through its point with the slope as measured. Only what is left of
+    // arithmetic is tidied (1.9999999997 is 2): rounding the slope or the height itself to six
+    // decimals moved the line off the curve, and a tangent then "crossed" the curve twice
+    // right beside the point where it touches.
+    const tidy = (v) => { const r = Number(v.toFixed(6)) || 0; return Math.abs(v - r) < 1e-8 * (1 + Math.abs(v)) ? r : v; };
+    m = tidy(m);
+    const c = tidy(ya - m * entry.a);
+    const measured = !known(f);
     const several = this.lines.filter((l) => l.kind === entry.kind).length > 1;
     const at = entry.kind === 'tangent' ? `at x = ${exact(entry.a)}` : `through x = ${exact(entry.a)} and x = ${exact(entry.b)}`;
-    return { ...entry, key: `line:${entry.id}`, m, c, ya, yb,
-      label: `${entry.kind} line to ${shortName(f)} ${at}, ${lineWords(m, c)}`,
+    const rough = measured && entry.kind === 'tangent'; // a slope measured from a page's points
+    return { ...entry, key: `line:${entry.id}`, m, c, ya, yb, measured,
+      label: `${entry.kind} line to ${shortName(f)} ${at}, ${rough ? 'about ' : ''}${lineWords(m, c, rough ? 1 : 2, finePoints(f))}`,
       short: `the ${entry.kind} line${several ? ` ${at}` : ''}` };
   }
 
@@ -981,7 +1143,7 @@ export class GraphMode {
     this.prepareFunction(false);
     this.seedSlide();
     const spec = this.functions.find((g) => g.line?.id === this.lineCount)?.line;
-    this.speak(spec ? exactly(() => words(spec)) : 'The line could not be added here.');
+    this.speak(spec ? (spec.measured ? words(spec) : exactly(() => words(spec))) : 'The line could not be added here.');
     this.draw();
   }
 
@@ -997,12 +1159,15 @@ export class GraphMode {
     if (slope === null) {
       this.speak(jump ? 'The curve jumps here, so it has no tangent line.'
         : uncertain ? 'The slope here could not be measured reliably, so no tangent line was added.'
-          : left !== null && right !== null ? `A corner: ${slopeWords(left)} from the left, ${slopeWords(right)} from the right. There is no single tangent line here.`
+          : isCusp(left, right) ? `${cuspWords(left).replace(/^a/, 'A')}. There is no tangent line here.`
+          : left !== null && right !== null ? `A corner: ${sidesWords(left, right, '', known(f) ? 2 : 1, finePoints(f)).join(' from the left, ')} from the right. There is no single tangent line here.`
             : 'The curve starts or ends here, so it has no tangent line on both sides.');
       return;
     }
     if (!Number.isFinite(slope)) { this.speak(`The tangent here is vertical: the line x = ${exact(a)}. A vertical line is not a function of x, so it cannot be added.`); return; }
-    this.addLine({ kind: 'tangent', a }, (l) => `Tangent line at x = ${exact(a)}, where y is ${say(l.ya)}: ${lineWords(l.m, l.c)}. It touches the curve here with the same slope. Tab goes to it.`);
+    // A curve read from a picture's points has a measured slope, so its tangent is "about".
+    const sure = known(f);
+    this.addLine({ kind: 'tangent', a }, (l) => `Tangent line at x = ${exact(a)}, where y is ${say(l.ya)}: ${sure ? '' : 'about '}${lineWords(l.m, l.c, sure ? 2 : 1, finePoints(f))}. It touches the curve here with the same slope. Tab goes to it.`);
   }
 
   // The secant line through the curve at the cursor and at another x. Returns what is wrong
@@ -1014,7 +1179,9 @@ export class GraphMode {
     if (!Number.isFinite(b)) return 'Write a number, such as 3 or -1.5.';
     if (Math.abs(b - a) < 1e-9) return `The other x must be different from ${exact(a)}: a secant line goes through two points.`;
     if (!Number.isFinite(heightAt(f, b))) return `${shortName(f)} has no point at x = ${exact(b)}.`;
-    this.addLine({ kind: 'secant', a, b }, (l) => `Secant line through ${exact(a)}, ${say(l.ya)} and ${exact(b)}, ${say(l.yb)}: ${lineWords(l.m, l.c)}. Its slope, ${exact(l.m)}, is the average rate of change between them. Tab goes to it.`);
+    // Across a jump or an asymptote the line still joins the two points, which is said.
+    const broken = unbroken(f, a, b) ? '' : ' The curve is broken between them (a jump, an asymptote or a gap).';
+    this.addLine({ kind: 'secant', a, b }, (l) => `Secant line through ${exact(a)}, ${say(l.ya)} and ${exact(b)}, ${say(l.yb)}: ${lineWords(l.m, l.c)}. Its slope, ${exact(Number(l.m.toFixed(4)) || 0)}, is the average rate of change between them.${broken} Tab goes to it.`);
     return null;
   }
 
@@ -1235,7 +1402,9 @@ export class GraphMode {
     // A formula's own holes ((x^2-4)/(x-2) at 2) and ends that are left out are open circles too.
     const own = (this.shapes || []).filter((l) => (l.kind === 'open-point' && !this.dots.some((d) => Math.abs(d.x - l.x) < 1e-9)) || (l.kind === 'endpoint' && !l.included));
     const dots = [...(this.dots || []), ...own.map((l) => ({ kind: 'open-point', x: l.x, y: l.y }))].map((d) => `<circle cx="${px(d.x)}" cy="${py(d.y)}" r="4.5" fill="${d.kind === 'open-point' ? 'var(--bg)' : 'var(--text)'}" stroke="var(--text)" stroke-width="1.5"/>`).join('');
-    svg.innerHTML = `<line x1="${px(0)}" y1="0" x2="${px(0)}" y2="${H}" stroke="var(--line)"/><line x1="0" y1="${py(0)}" x2="${W}" y2="${py(0)}" stroke="var(--line)"/>${labels}${paths}${dots}`
+    // The letters that name points, on the side of the curve the page prints them.
+    const names = (this.marks || []).map((m) => `<text class="graph-mark" x="${px(m.x)}" y="${py(m.y) + (m.below ? 24 : -12)}" text-anchor="middle">${escapeText(m.name)}</text>`).join('');
+    svg.innerHTML = `<line x1="${px(0)}" y1="0" x2="${px(0)}" y2="${H}" stroke="var(--line)"/><line x1="0" y1="${py(0)}" x2="${W}" y2="${py(0)}" stroke="var(--line)"/>${labels}${paths}${dots}${names}`
       + '<circle class="graph-cursor" r="7" fill="none" stroke="var(--check-line)" stroke-width="3"/>';
   }
 }

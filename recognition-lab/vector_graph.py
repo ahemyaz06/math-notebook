@@ -9,6 +9,9 @@ scale, no numbers are returned.
 import math
 import re
 
+# Raised when a graph would be read differently, so the notebook reads its kept pages again.
+VERSION = 4  # 2: letters beside a curve are named points; 3: the page's sentences are not labels, the grid; 4: points to four decimals, peaks at their true top, arrow tips, zeros of lines, y-axis crossings, touching the x-axis, running off the edge
+# is the span, numbers printed beside their grid lines
 NUMBER = re.compile(r'^[-−–]?\d+(?:\.\d+)?$')
 FUNCTION_LABEL = re.compile(r'^(?:[A-Za-z](?:\([a-z]\))?|y\s*=.*|[A-Za-z]\s*=.*)$')
 COLORS = {
@@ -56,6 +59,35 @@ def _fit(pairs):
     a = sum((p - mp) * (v - mv) for p, v in pairs) / var
     b = mv - a * mp
     return a, b, max(abs(a * p + b - v) for p, v in pairs)
+
+
+def prose_boxes(page):
+    """Where the page's sentences are: the box (x0, top, x1, bottom) of every run of words on
+    one line that has at least three words of letters. The box drawn around a graph is padded,
+    so it takes in parts of the lines above, below and beside the graph; a sentence is the
+    page's text, never a label of the graph ("Consider the graph of the function f below."
+    lost its last six words, and its f named the curve)."""
+    words = sorted(page.extract_words(), key=lambda w: (w['bottom'], w['x0']))
+    lines = []
+    for w in words:
+        if lines and abs(lines[-1][-1]['bottom'] - w['bottom']) < 2:
+            lines[-1].append(w)
+        else:
+            lines.append([w])
+    boxes = []
+    for line in lines:
+        line.sort(key=lambda w: w['x0'])
+        runs = [[line[0]]]
+        for w in line[1:]:
+            # Words of a sentence are a space apart; tick labels and side-by-side parts are further.
+            if w['x0'] - runs[-1][-1]['x1'] > 1.5 * (w['bottom'] - w['top']):
+                runs.append([])
+            runs[-1].append(w)
+        for run in runs:
+            if sum(1 for w in run if re.search(r'[A-Za-z]{2}', w['text'])) >= 3:
+                boxes.append([min(w['x0'] for w in run) - 1, min(w['top'] for w in run) - 1,
+                              max(w['x1'] for w in run) + 1, max(w['bottom'] for w in run) + 1])
+    return boxes
 
 
 def _axis_labels(words):
@@ -202,7 +234,7 @@ def _features(points, y_step):
     # Where the drawn curve stops (often at an arrowhead, whose last points bend back) is its end,
     # not a peak or a valley: no turns in the last few points or the last 3% of its width.
     width = abs(points[-1][0] - points[0][0]) if len(points) > 1 else 0
-    turns = [{'kind': t['kind'], 'at': t['at']} for t in turns
+    turns = [{'kind': t['kind'], 'at': _vertex(points, t['index'])} for t in turns
              if 2 < t['index'] < len(points) - 3
              and min(abs(t['at'][0] - points[0][0]), abs(t['at'][0] - points[-1][0])) > .03 * width]
     # Drop wiggles smaller than 1% of a grid step.
@@ -219,12 +251,80 @@ def _features(points, y_step):
     return clean_zeros, kept
 
 
+def _vertex(points, k):
+    """The top of a peak (bottom of a valley) near drawn point k: the turning point of the
+    parabola through the points around it. The drawn point itself is only the nearest of the
+    points the curve was drawn through (2 sin x drawn every 0.04 turned "near 1.59", not 1.57)."""
+    lo, hi = max(0, k - 6), min(len(points), k + 7)
+    x0, y0 = points[k]
+    near = [(x - x0, y - y0) for x, y in points[lo:hi]]
+    if len(near) < 5:
+        return list(points[k])
+    # Least squares for y = a t^2 + b t + c.
+    s = [sum(t ** n for t, _ in near) for n in range(5)]
+    r = [sum(y * t ** n for t, y in near) for n in range(3)]
+    m = [[s[4], s[3], s[2], r[2]], [s[3], s[2], s[1], r[1]], [s[2], s[1], s[0], r[0]]]
+    for c in range(3):
+        best = max(range(c, 3), key=lambda i: abs(m[i][c]))
+        if abs(m[best][c]) < 1e-14:
+            return list(points[k])
+        m[c], m[best] = m[best], m[c]
+        for i in range(3):
+            if i != c:
+                f = m[i][c] / m[c][c]
+                m[i] = [u - f * v for u, v in zip(m[i], m[c])]
+    a, b, c0 = (m[i][3] / m[i][i] for i in range(3))
+    if abs(a) < 1e-12:
+        return list(points[k])
+    t = -b / (2 * a)
+    if not near[0][0] <= t <= near[-1][0]:
+        return list(points[k])
+    return [x0 + t, y0 + c0 - b * b / (4 * a)]
+
+
+def _line_zeros(corners):
+    """Where straight pieces cross the x-axis (a piece lying on the axis crosses it nowhere; an end
+    lying on the axis is an end, said with the corners, not a crossing)."""
+    zeros = []
+    last = len(corners) - 2
+    for k, ((xa, ya), (xb, yb)) in enumerate(zip(corners, corners[1:])):
+        if ya == 0 and yb == 0:
+            continue
+        if ya == 0:
+            if k > 0:
+                zeros.append(xa)
+        elif yb == 0:
+            if k < last:
+                zeros.append(xb)
+        elif ya * yb < 0:
+            zeros.append(xa + (xb - xa) * ya / (ya - yb))
+    out = []
+    for z in sorted(zeros):
+        if not out or abs(z - out[-1]) > .02:
+            out.append(z)
+    return out
+
+
+def _height_at_zero(points):
+    """The height where the points cross the y-axis, or None when they do not reach it."""
+    for (xa, ya), (xb, yb) in zip(points, points[1:]):
+        if xa == xb:
+            continue
+        if min(xa, xb) <= 0 <= max(xa, xb):
+            return ya + (yb - ya) * (0 - xa) / (xb - xa)
+    return None
+
+
 def read_vector_graph(page, bbox):
     """page: a pdfplumber page. bbox: (x0, top, x1, bottom) in PDF points."""
     x0, top, x1, bottom = bbox
     box = (max(0, x0), max(0, top), min(page.width, x1), min(page.height, bottom))
     # LaTeX fakes bold by printing a character several times on top of itself.
     words = page.crop(box).dedupe_chars().extract_words(extra_attrs=['non_stroking_color'])
+    # Words of the page's sentences that the padded box cuts into are not the graph's.
+    prose = prose_boxes(page)
+    words = [w for w in words if not any(b[0] <= (w['x0'] + w['x1']) / 2 <= b[2] and b[1] <= (w['top'] + w['bottom']) / 2 <= b[3]
+                                         for b in prose)]
     x_labels, y_labels = _axis_labels(words)
     if not x_labels or not y_labels:
         return {'status': 'no_vector_scale', 'message': 'No numbered axes were found in the drawing.'}
@@ -241,7 +341,7 @@ def read_vector_graph(page, bbox):
             continue
         shapes.append((obj, pts, sx1 - sx0, sy1 - sy0))
 
-    vertical, horizontal, frame, strokes, arrows, dots = [], [], [], [], [], []
+    vertical, horizontal, frame, grid, strokes, arrows, dots = [], [], [], [], [], [], []
     for obj, pts, w, h in shapes:
         name = color_name(obj.get('stroking_color'))
         fill_name = color_name(obj.get('non_stroking_color'))
@@ -258,22 +358,39 @@ def read_vector_graph(page, bbox):
             arrows.append((fill_name if obj.get('fill') and fill_name not in (None, 'gray') else name, pts))
         elif name == 'gray':
             frame.extend(pts)
+            grid.extend(pts)
         elif name == 'black' and len(pts) == 2 and (w < .5 or h < .5):
             if not small:
-                frame.extend(pts)  # axes
+                frame.extend(pts)  # axes, or a grid of dashed black lines
+                dash = obj.get('dash')
+                if dash and dash[0]:
+                    grid.extend(pts)
         elif not small and obj.get('stroke', True):
             dash = obj.get('dash')
             strokes.append({'color': name, 'dashed': bool(dash and dash[0]), 'pts': pts})
 
-    def snap(position, lines):
+    def snap(position, lines, reach):
         near = min(lines, key=lambda v: abs(v - position), default=None)
-        return near if near is not None and abs(near - position) <= 1.5 else position
-    fx = _fit([(snap((w['x0'] + w['x1']) / 2, vertical), _number(w['text'])) for w in x_labels])
-    fy = _fit([(snap((w['top'] + w['bottom']) / 2, horizontal), _number(w['text'])) for w in y_labels])
-    if not fx or not fy:
-        return {'status': 'no_vector_scale', 'message': 'The axis numbers do not form a scale.'}
+        return near if near is not None and abs(near - position) <= reach else position
+
+    def scale(labels, positions, lines, step):
+        """A number belongs to the tick or grid line it is printed at. Some graphs print each
+        number beside its line, not centred on it (below and left of the grid line: every
+        height of a homework graph was read 0.33 too low). So each number goes to the nearest
+        line within reach of it, and that scale is used when the lines agree with the numbers
+        exactly; otherwise only a line right at the number (1.5 points) counts."""
+        values = [_number(w['text']) for w in labels]
+        gap = min(abs(b - a) for a, b in zip(positions, positions[1:]))
+        wide = _fit([(snap(p, lines, .4 * gap), v) for p, v in zip(positions, values)])
+        if wide and wide[2] <= .02 * step:
+            return wide
+        return _fit([(snap(p, lines, 1.5), v) for p, v in zip(positions, values)])
     x_step = abs(_number(x_labels[1]['text']) - _number(x_labels[0]['text']))
     y_step = abs(_number(y_labels[1]['text']) - _number(y_labels[0]['text']))
+    fx = scale(x_labels, [(w['x0'] + w['x1']) / 2 for w in x_labels], vertical, x_step)
+    fy = scale(y_labels, [(w['top'] + w['bottom']) / 2 for w in y_labels], horizontal, y_step)
+    if not fx or not fy:
+        return {'status': 'no_vector_scale', 'message': 'The axis numbers do not form a scale.'}
     if fx[2] > .05 * x_step or fy[2] > .05 * y_step:
         return {'status': 'no_vector_scale', 'message': 'The axis numbers are not evenly spaced, so no coordinates were read.'}
     ax, bx = fx[0], fx[1]
@@ -312,10 +429,19 @@ def read_vector_graph(page, bbox):
                     end, before = chain[0], chain[min(2, len(chain) - 1)]
                 else:
                     end, before = chain[-1], chain[max(-3, -len(chain))]
+                # The way the curve is heading at this end, from a point a few page points back
+                # (the nearest drawn points of a finely drawn curve are closer than the arrowhead
+                # is long, and a barb was then taken for the tip: "to (5.39, 3.12)" for 5.5, 3.08).
+                order = chain if side == 'start' else chain[::-1]
+                back = next((q for q in order[1:] if math.dist(q, end) >= 4), before)
+                length = math.dist(end, back) or 1
+                way = ((end[0] - back[0]) / length, (end[1] - back[1]) / length)
                 for color, apts in arrows:
                     if color == name and min(math.dist(end, q) for q in apts) < 5:
-                        tip = max(apts, key=lambda q: math.dist(q, before))
-                        chain = [tip] + chain if side == 'start' else chain + [tip]
+                        ahead = lambda q: (q[0] - end[0]) * way[0] + (q[1] - end[1]) * way[1]  # noqa: E731
+                        tip = max(apts, key=ahead)
+                        if ahead(tip) > .2:
+                            chain = [tip] + chain if side == 'start' else chain + [tip]
                         ends[side] = True
                         break
             for piece in _clip(chain, left, upper, right, lower):
@@ -333,13 +459,33 @@ def read_vector_graph(page, bbox):
                 if len(corners) <= 5 or (len(corners) <= 12 and len(corners) < .15 * len(piece)):
                     curve['kind'] = 'straight pieces'
                     curve['corners'] = [[_clean(x), _clean(y)] for x, y in corners]
+                    if not all(abs(x - corners[0][0]) < .02 for x, _ in corners):  # not a vertical line
+                        curve['crosses_x_axis_at'] = [_clean(z) for z in _line_zeros(curve['corners'])]
+                        y_axis = _height_at_zero(curve['corners'])
                 else:
                     curve['kind'] = 'curve'
                     zeros, turns = _features(graph_pts, y_step)
-                    curve['crosses_x_axis_at'] = [_clean(z) for z in zeros]
-                    curve['turning_points'] = [{'kind': t['kind'], 'at': [_clean(v) for v in t['at']]} for t in turns]
+                    turning = [{'kind': t['kind'], 'at': [_clean(v) for v in t['at']]} for t in turns]
+                    # A peak or valley on the x-axis touches it there; it does not cross it.
+                    touches = [t['at'][0] for t in turning if abs(t['at'][1]) <= .02 * y_step]
+                    for t in turning:
+                        if t['at'][0] in touches:
+                            t['at'][1] = 0.0
+                    curve['crosses_x_axis_at'] = [_clean(z) for z in zeros if not any(abs(z - t) < .1 * x_step for t in touches)]
+                    if touches:
+                        curve['touches_x_axis_at'] = touches
+                    curve['turning_points'] = turning
                     step = max(1, len(graph_pts) // 200)
-                    curve['samples'] = [[_clean(x), _clean(y)] for x, y in graph_pts[::step]]
+                    # The points along the curve keep four decimals (the page gives them that
+                    # exactly); what is said about the curve is rounded to two. With two, the
+                    # slope of a steep stretch could not be measured: beside an asymptote the
+                    # points are 0.04 apart in x, and 0.01 of rounding is a quarter of that.
+                    curve['samples'] = [[round(x, 4) + 0.0, round(y, 4) + 0.0] for x, y in graph_pts[::step]]
+                    if curve['samples'][-1] != [round(v, 4) + 0.0 for v in graph_pts[-1]]:
+                        curve['samples'].append([round(v, 4) + 0.0 for v in graph_pts[-1]])
+                    y_axis = _height_at_zero(graph_pts)
+                if curve.get('crosses_x_axis_at') is not None and y_axis is not None:
+                    curve['crosses_y_axis_at'] = _clean(y_axis)
                 curves.append(curve)
 
     # Labels such as f(x) go to the curve of the same colour, else to the nearest curve.
@@ -347,9 +493,14 @@ def read_vector_graph(page, bbox):
     # homework 4.1, problem 3, which said "c (blue)"), not of curves.
     def framed(w):
         return left <= (w['x0'] + w['x1']) / 2 <= right and upper <= (w['top'] + w['bottom']) / 2 <= lower
+    # "y = f(x)" may come as the words "y" and "=f(x)": the name is what follows the equals sign.
+    words = [{**w, 'text': w['text'][1:]} if re.match(r'^=[A-Za-z]\([a-z]\)$', w['text']) else w for w in words]
     names = [w for w in words if FUNCTION_LABEL.match(w['text']) and w['text'] not in ('x', 'y')]
-    if sum(len(w['text']) == 1 for w in names if framed(w)) >= 3:
+    letters = [w for w in names if len(w['text']) == 1 and framed(w)]
+    if len(letters) >= 3:
         names = [w for w in names if len(w['text']) > 1]
+    else:
+        letters = []
     coloured_first = sorted(names, key=lambda w: color_name(w.get('non_stroking_color')) == 'black')
     for w in coloured_first:
         centre = ((w['x0'] + w['x1']) / 2, (w['top'] + w['bottom']) / 2)
@@ -359,11 +510,15 @@ def read_vector_graph(page, bbox):
             continue
         nearest = min(pool, key=lambda c: min(math.dist(centre, p) for p in c['pixels']))
         # A black word only labels a curve it sits next to; it may be question text.
-        if colour == nearest['color'] or min(math.dist(centre, p) for p in nearest['pixels']) < 25:
+        # (A black curve is no reason either: every black word would be its name.)
+        if (colour != 'black' and colour == nearest['color']) or min(math.dist(centre, p) for p in nearest['pixels']) < 25:
             nearest['label'] = w['text']
     # One curve and one name inside the grid: the name is the curve's, however far from it
     # it is printed (the f(x) in a corner of the graph).
+    # So is the only name there is, printed past the frame (y = f(x) above the grid's corner).
     inside = [w for w in names if framed(w)]
+    if len(inside) != 1 and len(names) == 1:
+        inside = names
     if len(curves) == 1 and curves[0]['label'] is None and len(inside) == 1:
         curves[0]['label'] = inside[0]['text']
 
@@ -380,6 +535,41 @@ def read_vector_graph(page, bbox):
         points.append({'coordinate': [_clean(gx), _clean(gy)], 'kind': 'solid dot' if filled else 'open dot',
                        'color': color_name(obj.get('stroking_color'))})
     points.sort(key=lambda p: (p['coordinate'][0], p['coordinate'][1]))
+
+    # Each of those letters names the place it is printed beside: the nearest dot, turning point,
+    # corner or end of a curve, or else the nearest place on a curve. A letter with no curve
+    # close to it (20 points) names nothing here; it is not given a place by guessing.
+    def to_page(g):
+        return (g[0] - bx) / ax, (g[1] - by) / ay
+    places = [(to_page(p['coordinate']), p['coordinate']) for p in points]
+    for c in curves:
+        for g in [t['at'] for t in c.get('turning_points', [])] + c.get('corners', [])[1:-1] + [c['start'], c['end']]:
+            # A dot drawn over the end of a curve is that end, exactly.
+            if all(math.dist(to_page(g), page_pt) > 5 for page_pt, _ in places):
+                places.append((to_page(g), g))
+    centres = {id(w): ((w['x0'] + w['x1']) / 2, (w['top'] + w['bottom']) / 2) for w in letters}
+    marks, taken = [], set()
+
+    def mark(w, page_pt, g):
+        marks.append({'name': w['text'], 'coordinate': [_clean(g[0]), _clean(g[1])],
+                      'side': 'below' if centres[id(w)][1] > page_pt[1] else 'above'})
+    pairs = sorted(((math.dist(centres[id(w)], page_pt), n, k) for n, w in enumerate(letters)
+                    for k, (page_pt, _) in enumerate(places)), key=lambda t: t[0])
+    named = set()
+    for d, n, k in pairs:
+        if d > 20 or n in named or k in taken:
+            continue
+        named.add(n)
+        taken.add(k)
+        mark(letters[n], *places[k])
+    for n, w in enumerate(letters):
+        if n in named:
+            continue
+        on_curve = [q for c in curves for q in c['pixels']]
+        nearest = min(on_curve, key=lambda q: math.dist(centres[id(w)], q), default=None)
+        if nearest is not None and math.dist(centres[id(w)], nearest) <= 20:
+            mark(w, nearest, to_graph(nearest))
+    marks.sort(key=lambda m: (m['coordinate'][0], m['name']))
     for c in curves:
         c.pop('pixels')
 
@@ -387,10 +577,13 @@ def read_vector_graph(page, bbox):
         'status': 'exact',
         'message': 'Read from the drawing instructions inside the PDF, not from the picture: values are exact to about 0.01.',
         'axis_labels': {'x': [_number(w['text']) for w in x_labels], 'y': [_number(w['text']) for w in y_labels]},
-        'axis_span': _span(to_graph, (left + .05, upper + .05, right - .05, lower - .05),
-                           [_number(w['text']) for w in x_labels], [_number(w['text']) for w in y_labels], x_step, y_step),
+        'axis_span': _span(to_graph, _bounds(grid) if len(grid) >= 8 else (left + .05, upper + .05, right - .05, lower - .05),
+                           [_number(w['text']) for w in x_labels], [_number(w['text']) for w in y_labels], x_step, y_step, curves),
         'curves': curves,
         'points': points,
+        # Letters printed beside a curve, with the place each one names.
+        'marks': marks,
+        'reader_version': VERSION,
         'blank_grid': not curves and not points,
         # Where the graph's own text sits (frame plus axis numbers and labels), in PDF
         # points from the top-left, so other tools can tell it apart from page text.
@@ -405,8 +598,10 @@ def read_vector_graph(page, bbox):
     return result
 
 
-def _span(to_graph, frame, x_values, y_values, x_step, y_step):
-    """The drawn range. Axis arrows overshoot the last label slightly; then the labels win."""
+def _span(to_graph, frame, x_values, y_values, x_step, y_step, curves=()):
+    """The drawn range: the grid where one is drawn (the axes and their arrows run on past it:
+    a grid from -5 to 5 was "x from -5.46 to 5.46"), else the frame. Axis arrows overshoot the
+    last label slightly; then the labels win. A curve that leaves the grid widens the range."""
     left, upper, right, lower = frame
     xs = [to_graph((left, 0))[0], to_graph((right, 0))[0]]
     ys = [to_graph((0, lower))[1], to_graph((0, upper))[1]]
@@ -416,6 +611,11 @@ def _span(to_graph, frame, x_values, y_values, x_step, y_step):
     x1 = hi_x if 0 < xs[1] - hi_x <= .3 * x_step else xs[1]
     y0 = lo_y if 0 < lo_y - ys[0] <= .3 * y_step else ys[0]
     y1 = hi_y if 0 < ys[1] - hi_y <= .3 * y_step else ys[1]
+    for c in curves:
+        pts = c.get('samples') or c.get('corners') or []
+        pts = list(pts) + [c['start'], c['end']] + [t['at'] for t in c.get('turning_points', [])]
+        x0, x1 = min([x0] + [q[0] for q in pts]), max([x1] + [q[0] for q in pts])
+        y0, y1 = min([y0] + [q[1] for q in pts]), max([y1] + [q[1] for q in pts])
     return {'x': [_clean(x0), _clean(x1)], 'y': [_clean(y0), _clean(y1)]}
 
 
@@ -442,6 +642,39 @@ def _continues(c):
     return f" An arrow shows it continues past its {'left' if at_start == rightward else 'right'} end."
 
 
+def _off_the_edge(c, span):
+    """The ends of a curve that lie on the frame of the graph with no arrow there: said as a fact of
+    the drawing (it reaches the edge); whether the function goes on past it, the page does not say."""
+    if c['dashed'] or (c['kind'] == 'straight pieces' and all(abs(x - c['corners'][0][0]) < .02 for x, _ in c['corners'])):
+        return ''  # a guide line or an asymptote is not a curve that goes on
+    tol_x, tol_y = .012 * (span['x'][1] - span['x'][0]), .012 * (span['y'][1] - span['y'][0])
+    sides = []
+    for side in ('start', 'end'):
+        x, y = c[side]
+        on_frame = min(abs(x - span['x'][0]), abs(x - span['x'][1])) <= tol_x or min(abs(y - span['y'][0]), abs(y - span['y'][1])) <= tol_y
+        if on_frame and side not in c['continues'] and not c.get('dot_at', {}).get(side):
+            sides.append(side)
+    if not sides:
+        return ''
+    if len(sides) == 2:
+        return ' It reaches the edge of the graph at both ends.'
+    rightward = c['start'][0] <= c['end'][0]
+    return f" It reaches the edge of the graph at its {'left' if (sides == ['start']) == rightward else 'right'} end."
+
+
+def _axis_words(c, near):
+    parts = []
+    zeros = c.get('crosses_x_axis_at') or []
+    if zeros:
+        parts.append(f"It crosses the x-axis {near}x = " + _join(_fmt(z) for z in zeros) + '.')
+    if c.get('touches_x_axis_at'):
+        parts.append(f"It touches the x-axis {near}x = " + _join(_fmt(z) for z in c['touches_x_axis_at']) + '.')
+    y = c.get('crosses_y_axis_at')
+    if y is not None and not any(abs(z) < .005 for z in zeros + (c.get('touches_x_axis_at') or [])):
+        parts.append(f"It crosses the y-axis {near}y = {_fmt(y)}.")
+    return parts
+
+
 def describe(result):
     span = result['axis_span']
     sentences = [f"The graph shows x from {_fmt(span['x'][0])} to {_fmt(span['x'][1])} and y from "
@@ -452,7 +685,13 @@ def describe(result):
         style = ('dashed ' if c['dashed'] else '') + c['color']
         kind = 'line' if c['kind'] == 'straight pieces' else 'curve'
         name = f"{c['label']} ({style})" if c['label'] else f'A {style} {kind}'
-        more = _continues(c)
+        # An end with a dot on it stops there, even on the frame of the graph.
+        c['dot_at'] = {side: any(abs(p['coordinate'][0] - c[side][0]) < .03 and abs(p['coordinate'][1] - c[side][1]) < .03 for p in result['points'])
+                       for side in ('start', 'end')}
+        more = _continues(c) + _off_the_edge(c, span)
+        del c['dot_at']
+        if c['kind'] == 'straight pieces' and not all(abs(x - c['corners'][0][0]) < .02 for x, _ in c['corners']):
+            more = ''.join(' ' + s for s in _axis_words(c, 'at ')) + more
         if c['kind'] == 'straight pieces' and len(c['corners']) == 2:
             (xa, ya), (xb, yb) = c['corners']
             if abs(xa - xb) < .02:
@@ -467,10 +706,11 @@ def describe(result):
             parts = [f"{name} runs from {_pt(c['start'])} to {_pt(c['end'])}."]
             if c['turning_points']:
                 parts.append('It turns at ' + _join(f"a {t['kind']} near {_pt(t['at'])}" for t in c['turning_points']) + '.')
-            if c['crosses_x_axis_at']:
-                parts.append('It crosses the x-axis near x = ' + _join(_fmt(z) for z in c['crosses_x_axis_at']) + '.')
+            parts.extend(_axis_words(c, 'near '))
             sentences.append(' '.join(parts) + more)
     for p in result['points']:
         colour = f"{p['color']} " if p['color'] not in (None, 'black') else ''
         sentences.append(f"A {colour}{p['kind']} is at {_pt(p['coordinate'])}.")
+    if result.get('marks'):
+        sentences.append('Letters name these points: ' + _join(f"{m['name']} at {_pt(m['coordinate'])}" for m in result['marks']) + '.')
     return ' '.join(sentences)

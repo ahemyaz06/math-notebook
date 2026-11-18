@@ -409,7 +409,8 @@ export function derivativeOf(f, label) {
           const peak = a > p;
           let lo2 = xs[i - 1], hi2 = xs[i + 1];
           for (let n = 0; n < 60; n += 1) { const u = lo2 + (hi2 - lo2) / 3, v = hi2 - (hi2 - lo2) / 3; if ((valueOn(s, u) > valueOn(s, v)) === peak) hi2 = v; else lo2 = u; }
-          const x = Number(((lo2 + hi2) / 2).toPrecision(9));
+          // (A flat turn is found to about eight decimals; what is left beyond seven is not a place.)
+          const x = Number(((lo2 + hi2) / 2).toFixed(7)) || 0;
           out.push({ kind: peak ? 'maximum' : 'minimum', x, y: value(s, x) });
         }
       }

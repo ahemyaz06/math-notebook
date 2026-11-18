@@ -1075,6 +1075,10 @@ export function graphToPgfplots(graph) {
   const open = dots.filter((p) => p.kind === 'open dot');
   if (solid.length) lines.push(`\\addplot[only marks, mark=*] coordinates {${solid.map((p) => `(${p.coordinate.join(',')})`).join(' ')}};`);
   if (open.length) lines.push(`\\addplot[only marks, mark=*, mark options={fill=white}] coordinates {${open.map((p) => `(${p.coordinate.join(',')})`).join(' ')}};`);
+  // Letters that name points on a curve read from a PDF, on the side the page prints them.
+  for (const m of graph.marks || []) {
+    if (/^[A-Za-z]$/.test(m.name)) lines.push(`\\node[${m.side === 'below' ? 'below' : 'above'}] at (axis cs:${m.coordinate.join(',')}) {$${m.name}$};`);
+  }
   lines.push('\\end{axis}', '\\end{tikzpicture}');
   return lines.join('\n');
 }

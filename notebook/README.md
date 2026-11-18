@@ -44,15 +44,21 @@ graph mode, F1 or the question mark lists the graph keys. Every command is also 
 - Ctrl+G: open the equation's graph in graph mode.
 - Ctrl+Shift+G: make an empty graph to draw on.
 - Ctrl+Shift+I: import a PDF.
-- Ctrl+S: save. Ctrl+Shift+W: export as Word.
+- Ctrl+S: save. A notebook never saved asks where, and its Save as type list has PDF, Word, a web
+  page and braille too. Ctrl+Shift+S: save as. Ctrl+Shift+W: save as Word.
 - Ctrl+Z and Ctrl+Y: undo and redo anything, equations included.
 - F1: every key.
 
 ## The menus and the toolbar
 
-Press Alt for the seven menus: File, Edit, Insert, Format, Math, Tools and Help. Related
-commands are grouped in submenus: File > Export, Edit > Go to, Insert > Table, Math > Graph and
+Press Alt for the eight menus: File, Import, Edit, Insert, Format, Math, Tools and Help. Related
+commands are grouped in submenus: File > Save as, Edit > Go to, Insert > Table, Math > Graph and
 Tools > Teacher. Settings is in the Help menu (Ctrl+comma).
+
+The Import menu (Alt+P) has one item for each kind of file Math Notebook can read: PDF
+(Ctrl+Shift+I) and LaTeX (.tex). Each opens a file box that shows only that kind of file. Any file
+it can read opens one box for both, and the file's ending says how it is read. Word documents, web
+pages and braille can be saved (File > Save as) but not imported.
 
 A small toolbar sits above the document: paragraph style, bold, italic, underline, bullets,
 numbering, Equation, Graph, Draw and Check line. It is a single Tab stop; the arrow keys move
@@ -116,6 +122,13 @@ The document is one edit field, as in Word, so you can stay in focus mode the wh
   The line (or just your selection) becomes a real equation.
 - Alt+= opens a box to type a new equation in.
 - LaTeX works too: type it, or switch to it with Ctrl+L while editing an equation.
+- The two can be mixed on one line: \frac{1}{2}x^2 + sqrt(x) becomes one equation, with a real
+  square root.
+- A line can start with = to carry on from the line above, as in factoring: write x^2 - 4, and
+  on the next line = (x - 2)(x + 2). F9 on that line says whether the two are equal.
+- A few things to know about how plain text is read: 1/2x is a half times x (write 1/(2x) for
+  one over 2x); sin 2x is the sine of 2x, and sin x * x is sin x times x; -x^2 is minus x
+  squared (write (-x)^2 for the other); 2^3^2 is 2 to the power 9.
 
 ### Reading and changing an equation
 
@@ -152,14 +165,18 @@ It uses rules, not AI, and it never tells you the answer. Some examples:
 - Inequalities must be true for the same numbers.
 - f'(x) = ..., y' = ... and dy/dx = ... are compared with the slope of the function above.
   d/dx (...) = ... is compared with the slope of what is in its brackets.
-- Limits and integrals are worked out with numbers, for example `lim_(x->2) ... = 4` and
-  `int_0^1 x^2 dx = 1/3`. An integral with no limits is checked by taking the slope of your answer.
+- Limits and integrals are worked out with numbers, for example `lim_(x->2) ... = 4` (or
+  `lim x -> 2 ... = 4`, without brackets) and `int_0^1 x^2 dx = 1/3`. A limit too slow to see
+  in numbers, such as ln(ln x) as x grows, is said to be one the check cannot tell. An integral with no limits is checked by taking the slope of your answer.
 - It also notices when one line has a value where the other has none, such as (x^2 - 4)/(x - 2)
   and x + 2 at x = 2.
 
-A line of text that starts with = is compared with the equation above it. Words or a heading end
-a piece of work, so a new problem is not compared with the last one. When it cannot tell (sums,
-or a limit that settles too slowly) it says "Could not check" instead of guessing. Matching at
+A line that starts with = (an equation, or still text) must be equal to what the line above ends
+with: "Equal to the line above", or "Not equal to the line above" with the numbers. Each line of
+a factoring can start with =, one under the other. Words or a heading end
+a piece of work, so a new problem is not compared with the last one. When it cannot tell (a sum
+that goes on to infinity, a limit that settles too slowly, a name it has no value for such as
+x with a hat) it says "Could not check" instead of guessing. Matching at
 every number it tries is strong evidence, but not a proof.
 
 ### Comments
@@ -214,6 +231,16 @@ The graph line in the document describes the graph in the course's words: where 
 axes, its peaks and valleys, holes, vertical asymptotes, and for piecewise functions each piece
 and what happens where they meet (a jump, or a hole with the point somewhere else). Math > Graph >
 Copy graph as LaTeX gives pgfplots code that draws the same graph in a .tex file.
+
+A graph read from a PDF has a long description (where the curve starts, turns and crosses), so
+its line starts with the first sentence only:
+
+- F4 on the graph's line: show the whole description, or hide it again.
+- Shift+F4: the same for every graph in the document.
+- F2: the numbers in these descriptions, rounded or as read. Rounded is the nearest half when the
+  number is very close to it, otherwise one decimal: 1.01 is 1, 3.49 is 3.5, 2.71 is 2.7. As read
+  is what was measured from the drawing, to two decimals. The choice is kept (it is also in
+  Help > Settings > Writing).
 
 ### Listening to a graph: the graph mode keys
 
@@ -274,9 +301,11 @@ Moving freely:
 - Arrow keys: move anywhere on the graph. When you land on a curve its tone plays and the point is
   said as "on" that function. C puts you back on the function.
 
-Numbers are rounded to the nearest half when spoken (a height of 4.19 is "4", a zero at 1.73 is
-"1.5"). The document's own text stays exact. Help > Settings > Graph sound > Numbers you hear can
-give one decimal or the exact value.
+A function with a formula, or one you drew, is said to two decimals: y = x² at 0.5 is "0.25", a
+zero at 1.73 is "1.73". A curve read from a PDF is measured from its drawing, so its numbers are
+rounded: the nearest half when the number is within 0.06 of it, otherwise one decimal (1.97 is
+"2", 2.71 is "2.7"), and its slopes and tangent lines are said as "about". Help > Settings >
+Graph sound > Numbers you hear can give one decimal or six digits instead.
 
 ### What the sounds mean
 
@@ -366,9 +395,12 @@ move a point or change a number.
 - For a drawing it is exact. A straight line gives a flat stretch at its slope. A sharp corner has
   no slope, so the derivative jumps there, with an open dot on each side. A smooth point gives one
   value.
-- For an equation it is measured from the curve (the same way S measures the slope). It has no
-  formula, and its numbers are right to about four decimals. Where the function has a corner, a
-  jump, a hole or an asymptote, the derivative has no value.
+- For an equation it is worked out by the rules of calculus (power, product, quotient and chain
+  rule, and the derivatives of sin, ln, e^x and the rest), so it is exact: the second derivative
+  of x^2 + 1000 is 2 everywhere. S on an equation uses the same rules. Where the function has a
+  corner, a jump, a hole or an asymptote, the derivative has no value. Where the rows of a
+  function in pieces meet smoothly (x^2 up to 1, then 2x - 1), the derivative is there, with the
+  slope both rows come to.
 - A derivative often goes outside the graph: under y = x squared, shown from minus 2.5 to 30, the
   derivative runs from minus 10 to 10. Such a curve has a scale of its own that reaches as far as it
   does, so it is as clear to hear as the function. Tab then says "on its own scale", its notes are
@@ -380,7 +412,7 @@ move a point or change a number.
 ### LaTeX files (.tex)
 
 If your teacher gives you the LaTeX source (the file the PDF was made from), use it: it holds the
-exact maths, so nothing has to be guessed. File > Import LaTeX (.tex) turns it into a notebook:
+exact maths, so nothing has to be guessed. Import > LaTeX (.tex) turns it into a notebook:
 
 - Sections become headings, and inline and display maths become equations (each row of an align
   on its own line).
@@ -397,7 +429,7 @@ exact maths, so nothing has to be guessed. File > Import LaTeX (.tex) turns it i
 
 ### PDF files
 
-File > Import PDF (Ctrl+Shift+I; Ctrl+I is italic, as in Word). Pages are added at the end of the
+Import > PDF (Ctrl+Shift+I; Ctrl+I is italic, as in Word). Pages are added at the end of the
 document as they are read, and you can keep working meanwhile.
 
 How pages are read is set in Help > Settings > Reading PDFs:
@@ -440,13 +472,17 @@ It only helps with PDFs made by LaTeX.
 
 Nobody else needs Math Notebook to read your work.
 
-- Word: File > Export > Word document (Ctrl+Shift+W). Every equation is a real Word equation, so
+Everything is saved from one place, File > Save as, as in Word: Notebook, Word document, PDF, Web
+page and Braille. Each opens the same save box, and its Save as type list can switch to any other.
+A PDF, Word or braille copy is a copy: the notebook file itself is saved with Ctrl+S.
+
+- Word: File > Save as > Word document (Ctrl+Shift+W). Every equation is a real Word equation, so
   Word, NVDA and MathCAT read it as maths. You do not need Word installed to make the file. This is
   the best format to share with other screen reader users.
-- PDF: File > Export > PDF makes a tagged PDF with the headings as bookmarks. It also carries your
+- PDF: File > Save as > PDF makes a tagged PDF with the headings as bookmarks. It also carries your
   notebook inside it as a standard attachment, so when Math Notebook opens that PDF again you get
   your document back exactly, graphs and all. Other PDF readers just show and print it as usual.
-- Braille: File > Export > Braille (BRF) makes a braille ready file for an embosser or a braille
+- Braille: File > Save as > Braille (BRF) makes a braille ready file for an embosser or a braille
   display. It needs [BrailleBlaster](https://www.brailleblaster.org/) (free, from the American
   Printing House), installed separately; open BrailleBlaster once first to accept its licence. For
   Nemeth maths, choose UEB with Nemeth in BrailleBlaster's Translation settings. The way the braille
@@ -467,7 +503,7 @@ sheets: Tools > Teacher > Teacher mode. Then, from the same menu:
   Hidden points are not announced in graph mode either.
 - Preview student copy: shows exactly what students get, read only, with graphs that sound as theirs
   will.
-- Save student copy, or export it as Word or PDF. Hidden parts are removed from these files, not just
+- Save student copy, or save it as Word or PDF. Hidden parts are removed from these files, not just
   hidden. Your own file is the answer key and reopens in teacher mode.
 
 ## Settings
@@ -517,7 +553,7 @@ into a new folder, and copy your old data folder into it.
 Help > Check for updates asks GitHub's public "latest release" page whether a newer version is out,
 and if so offers its download page. Nothing is downloaded or installed by itself, and nothing about
 you or your documents is sent. Help > Settings > Writing can check each time the app starts (off
-unless you turn it on). See [what changed in 0.8.0](CHANGELOG.md).
+unless you turn it on). See [what changed in 0.8.1](CHANGELOG.md).
 
 
 ## The AI add-on (optional)

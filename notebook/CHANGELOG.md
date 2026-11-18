@@ -2,6 +2,269 @@
 
 Earlier versions are described on the [releases page](https://github.com/ahemyaz06/math-notebook/releases).
 
+## 0.8.1 (beta)
+
+### An Import menu
+
+- Import PDF and Import LaTeX moved from the File menu to a menu of their own, Import (Alt+P):
+  PDF (still Ctrl+Shift+I), LaTeX (.tex), and Any file it can read, one file box for both whose
+  file's ending says how it is read. Each of the first two shows only its own kind of file.
+
+### Save as: every kind of file in one place
+
+- File > Export is gone. Everything is in File > Save as, as in Word: Notebook (Ctrl+Shift+S),
+  Word document (Ctrl+Shift+W), PDF, Web page and Braille (BRF). Each opens the same save box,
+  whose Save as type list has all five, the one chosen first. The kind is taken from the file's
+  ending; a name typed without one gets the chosen kind's.
+- Ctrl+S on a notebook never saved opens that box too, so it can be saved straight away as a PDF
+  or Word document. A PDF, Word, web page or braille copy says if the notebook itself is not saved
+  yet. Saving before closing offers the notebook only.
+- Messages say "Saved homework.docx as a Word document" (they said "Exported"). Teacher: "Save
+  student copy as Word document" and "as PDF".
+
+### F9, graphs and graph sound work maths out in one place
+
+- F9, graphs, graph mode and the graph sound now use one way of working out values, limits and
+  slopes, so they cannot give different answers for the same function. Every answer was compared
+  before and after, to the last digit, and it is as fast as before.
+- Fixed: F9 said |x| has slope 0 at 0 and |sin x| has slope 0 at pi. A corner has no slope.
+  F9 now finds the slope of x^(5/3) and x|x| at 0 (it is 0), and says sin(x)/x has none at 0.
+- Fixed: csc, cot, coth and csch at 0, atanh at 1 and sec at pi/2 have no value (F9 said
+  infinity, and sec at pi/2 was 1.6 × 10^16).
+- Fixed: L in graph mode said 0.000097 for sqrt(x) ln x as x goes to 0 from the right; it is 0.
+- Fixed: (cos x − 1 + x²/2)/x⁴ at 0 is 1/24, and (e^x − e^−x − 2x)/x³ is 1/3. They were said to
+  swing with no limit. Limits are right to the six digits they are said with ((1 − cos x)/x² was
+  0.499999997).
+- The graph sound marks holes, jumps and asymptotes with these same limits: (x³ − 1)/(x − 1) has
+  its hole at exactly (1, 3), and coth x has its asymptote at 0.
+- F9 reads lim_(x->pi/2^-), with the side written after the point.
+
+### Graphs read from a PDF picture
+
+- An estimated equation is read by the notebook's own reader, with the same heights as before.
+  A number like 5e-05 in an estimate is written out in full.
+- An estimate that is not a function of x (a vertical line or a circle) is left out; before, it
+  stopped the whole graph from opening.
+
+### Limits written without brackets, braces typed as in LaTeX, and limits worked out truly
+
+- Fixed: `lim x -> inf 1/x^2` was written \lim_{} x \to \frac{\infty \cdot 1}{x^{2}} (the limit
+  took only the x, and infinity was multiplied in). A limit can now be written without brackets
+  in every way: `lim x -> inf 1/x^2`, `limx -> inf 1/x^2`, `lim_x -> 2 x^2`, `lim_{x->inf} 1/x^2`,
+  `lim x -> 0^+ 1/x`, `lim x -> pi/2 sin x`, `lim x -> 2pi cos x`, pasted `lim x → ∞ 1/x²`, and in
+  LaTeX `\lim x \to \infty \frac{1}{x^{2}}`. Each is written with x -> a under the lim.
+- Fixed: braces typed as in LaTeX in the plain-text box were drawn as braces: x^{2} was
+  x^{\{2\}}, and `y = sqrt{x+1}` could not be read at all (the {x+1} was taken for a condition
+  like {x > 0}).
+- √ and ∛ pasted in read as square and cube roots.
+- F9, limits: four limits were worked out as a wrong number, which could pass a wrong line.
+  1/ln x as x grows was 0.054 (it is 0), ln(ln x) was 3.2 (it grows without end), sqrt(x) ln x
+  near 0 was 0.0075 (it is 0), and x ln x near 0 was 0.00001. Limits that grow slowly (ln x,
+  sqrt x), that creep to 0 or swing to it (1/ln x, x sin(1/x)), or that are too big for the
+  computer to hold (e^(1/x) from the right of 0) are now worked out. ln(ln x) grows too slowly
+  to see in numbers, so the check says it cannot tell rather than giving a number.
+- Tests: every way of writing in test_equation_ways.mjs is now also typed into the plain-text
+  box and its LaTeX checked for braces, empty subscripts and names drawn letter by letter (it
+  checked values only, so x^{\{2\}} passed). 27 known mistakes were put back into the code one at
+  a time to see that the tests catch each one. Four were not caught at first: a power rule
+  without the chain rule, small slips such as 2 pi = 6.28 being passed, and two ways of writing a
+  limit. Tests were added for them.
+
+### Derivatives, tangent lines and graphs read from a PDF, checked by hand
+
+Every slope, tangent line, first and second derivative of 42 functions was compared with the
+derivative worked out by hand, at 3644 places (corners, cusps, holes, asymptotes, functions in
+pieces among them). Thirteen graphs were drawn from known functions in the style of the course
+notes, typeset to a PDF and imported, and every word and number compared with the functions.
+
+- Derivative curves of an equation are now worked out by the rules of calculus, not measured
+  from the curve. Measuring went wrong in places:
+  - the second derivative of x^2 + 1000 (which is 2) had a hundred false asymptotes, peaks
+    and valleys;
+  - x^2 up to 1, then 2x - 1, had no derivative at 1 (it is 2) and no second derivative
+    beside it;
+  - the derivative of x^(5/3) at 0 was "0.0022" (it is 0), and that of x^(4/3) had no value
+    at 0;
+  - the derivative of (x^2 - 4)/(x - 2) had a false asymptote at 2.
+  S on an equation uses the same rules.
+- Fixed: |sin x| had a derivative of 1 at pi (a corner, where it has none).
+- Fixed: the derivative of |x| said "jump at x = 0" twice.
+- Tangent lines: a tangent line that meets the curve again now says where. The tangent to
+  x^3 - 3x at 1 crosses it at -2. The tangent to x^4 - 2x^2 at 1 touches it at -1 too (it was
+  said to cross there). A tangent along a straight piece no longer hides the real crossings
+  elsewhere. Crossings of two curves are said as "touches" when they meet without changing sides.
+- Graphs read from a PDF (read again the next time each PDF is imported):
+  - the points along a curve keep four decimals, not two. Slopes beside an asymptote were
+    far off: the slope of 1/(x - 2) at 2.3 was about 11.6 for 11.1, and its end was said to
+    be "minus 16" for minus 25;
+  - a square root starting at a point is now said to go straight up there (it was "slope 1.9");
+  - peaks and valleys are at their true top and bottom: 2 sin x peaks "near 1.57", not 1.59;
+  - an arrow's end is where the curve ends: sqrt(x + 4) drawn to 5.5 was said to end at
+    (5.39, 3.12);
+  - straight lines say where they cross the x-axis and the y-axis, curves say where they cross
+    the y-axis, and a valley on the x-axis "touches" it rather than crossing;
+  - a curve that reaches the edge of the graph with no arrow says so;
+  - tan x drawn up to the top of the grid, with its dashed asymptote a little further on, says
+    it runs off towards that asymptote;
+  - a gentle slope on such a curve is not "flat": e^x at minus 3 has slope about 0.05.
+- New tests: hand-worked derivatives, tangents and four-decimal curves in test_curve_points.mjs,
+  and the thirteen drawn graphs in Recognition Lab's test_vector_graph.py
+  (test-fixtures/drawn-graphs.tex and .pdf).
+
+### Equations, however they are written
+
+Every way of writing an equation (plain text, LaTeX, LaTeX with plain text in it, MathML put in
+from another program) was checked against values worked out by hand: 98 pieces of maths in 311
+ways of writing. Each is read as typed, read back from its drawing, and where it can be, graphed.
+
+- New: a line can start with =. It carries on from the line above, as in factoring, and can be
+  made an equation like any other line (Ctrl+Shift+E, or in the equation box). F9 on it says
+  "Equal to the line above" or "Not equal to the line above" with the numbers. It is compared
+  with what the line above ends with, whatever that line is. Ctrl+G graphs it as y = that.
+- New: LaTeX and plain text can be mixed on one line. \frac{1}{2}x^2 + sqrt(x) used to draw sqrt
+  as the four letters s, q, r, t; it is now a square root. The same for pi, sin x, <= and the
+  rest, in a typed line, in the equation box's LaTeX mode and in the convert box.
+- Fixed: 3*-2 was written 3-2 (so minus 6 became 1). It is 3 times minus 2.
+- Fixed: sin x * x was written sin xx, the sine of x times x. It keeps its times sign.
+- Fixed: 1.5.2 was read as 1.5 times .2, and 2.x as nothing with a value. Both now say what is
+  wrong. A full stop that ends a sentence (x = 2.) is left out; the three dots (1, 2, ..., n) stay.
+- Fixed, in LaTeX from a PDF, a .tex file or typed:
+  - \sin\frac{x}{2} and \ln\frac{x}{2} were read as (sin x)/2 and (ln x)/2. They are the sine
+    and the logarithm of the fraction.
+  - \frac{x}{2}^{2} was read as x over 2 squared (x/4). It is the fraction squared.
+  - 2\frac{1}{x} was read as 21/x, x^{2}3 as x to the 23, \log_{2}8 could not be read at all.
+  - 2\frac{1}{2} was read as 21/2. It is the mixed number two and a half, as MathCAT says it.
+  - \frac{d}{dx}\frac{1}{x} could not be checked; \frac{d}{dx}x^{2} was said "d/dxx^2".
+  - \rightarrow came out as the word "arrow" (so a limit written with it had no value), and
+    \bigl( \bigr) as the letters l and r.
+  - (x^{2})^{\prime} is the derivative; 1\,000 is one thousand; \textstyle, \cfrac and
+    backslash-space are read.
+- Fixed: 3 + -2 put in from MathML came back as 3 plus-or-minus 2.
+- Fixed: a name the notebook has no value for (\hat{x}, \vec{v}, \bar{x}) was worked out letter
+  by letter (h times a times t times x) by the F9 check and the graphs. It is still read aloud
+  by name, and the check and the graphs now say they cannot work it out.
+- The F9 check now works out: an integral written without brackets (int_0^1 2x + 1 dx reaches
+  to its dx), int dx/x, a limit of an integral with a sign (int_-1^1), a sum or a product with
+  an end (sum_(n=1)^4 n^2 is 30), max and min, and Word's own d in an integral's dx.
+- Fixed: with the cursor at the very start of an equation being stepped through, a typed letter
+  went into the sentence before the equation, not into it.
+- New test of all of this (test_equation_ways.mjs).
+
+### Graphs read from a PDF
+
+- Fixed: text next to a graph went missing. The box around a graph is wider than the graph, and
+  every word inside it was taken as the graph's. "Consider the graph of the function f below."
+  came out as "Consider the", and a line under a graph ("9. Use the graph of f shown below to
+  determine:") was gone. A sentence is now always the page's text, and the graph stands after the
+  line above it, not before it.
+- Fixed: on a graph whose numbers are printed beside the grid lines (below and to the left of
+  them), every height was read about a third of a unit too low. Numbers now go to the grid line
+  or tick they are printed at.
+- Fixed: a word from a sentence ("e", "f") was taken as the curve's name; "y = f(x)" printed at
+  the end of the curve now names it. The range is the grid's ("x from −5 to 5"), not the axis
+  arrows' ("−5.46 to 5.46").
+- A long description starts short in the document: its first sentence. F4 on the graph's line
+  shows or hides the rest, and Shift+F4 does it for every graph (Math > Graph). Word, braille
+  and web page exports always have the whole description.
+- Numbers in these descriptions are rounded: to the nearest half when the number is within 0.06
+  of it, otherwise to one decimal. A valley read as (1.01, 0.03) is at (1, 0); a crossing at
+  2.71 is 2.7. F2 goes between rounded numbers and the numbers as read (two decimals); the
+  choice is kept, and is also in Help > Settings > Writing.
+- A PDF imported before is read again the next time it is imported, so its graphs and the text
+  around them are corrected.
+
+### Questions from a PDF are read-only
+
+- A question (its Problem or Example line, its text and its graphs) cannot be changed by
+  typing, Delete, Backspace, cut or paste; its answer box after it can. Up and Down still stop
+  at each paragraph of a question, so it can be read. A line the checker flagged stays
+  editable, since the fix may be in it.
+- A key pressed inside a question says "That is a question. Write your answer in the answer box
+  after it." Saved and opened again, questions are still read-only.
+
+### Graphs read from a PDF: slopes, tangents, limits, holes, jumps and asymptotes
+
+Checked against five graphs from the course pages and against curves with known formulas,
+kept the way the reader keeps them (points rounded to 0.01).
+
+- Fixed: the slope of a curve read from a PDF was taken from the three nearest points, whose
+  rounding decided it. On the cubic of Section 2.8 (page 6) the slope at x = 2 was "4" (it is
+  2.5), a smooth curve was "a corner" at some of its points, and a tangent line "crossed" the
+  curve several times beside the point it touches. The slope now comes from a curve fitted through
+  the points around x. On that cubic the largest error is now 0.06 (it was 3.4). These slopes and
+  tangent lines are said as "about", to one decimal.
+- A sharp corner in such a curve (|x| printed as a curve) is found where the two sides' own
+  curves meet, and nothing is fitted across it. A corner whose two slopes differ by less than
+  about 0.5 cannot be told from rounding in a PDF's points and is read as a smooth place.
+- Fixed: pieces of one function drawn apart (at a jump or an asymptote) were three separate
+  "blue curve" functions. Curves of one colour that follow each other along x are one function.
+- Fixed: a dot drawn at the end of a piece was not that end (the line stops at the dot's edge),
+  so at x = 2 on the graph of Section 2.5 "there is no point" and "no curve on either side". Now:
+  from the left minus 2, from the right 1, the value is minus 2, a jump.
+- Fixed: an open dot on a curve was not a hole. Now the limit is the curve's height there and
+  "there is no point"; with a solid dot away from the curve at that x, "the limit and the value
+  differ". Dots are said as what they are: "hole at", "jump at x =", "the value at x = 1 is 1,
+  away from the curve".
+- Fixed: a curve that runs off the top or bottom of the graph beside a dashed vertical line has
+  a vertical asymptote there: L says "goes down to minus infinity" or "goes up to infinity" (it
+  said "no curve on either side"), and the asymptote is a point of interest.
+- Fixed: an arrow's tip just short of the edge of the graph (x = 4.99 where the grid ends at 5)
+  left "no point" at x = 5. The end of the curve is at the edge. Where a curve stops with an
+  arrow, or runs off the graph, L says so.
+- Fixed: two points with the same x at the end of a curve (an arrow's tip) made "the curve jumps
+  here" at its start.
+- Fixed: under a graph that was read, the page could say "A drawing is here that the notebook
+  could not read": the graph's own curve, where it runs on past its box. (A PDF imported before
+  is read again.)
+
+### Numbers you hear in graph mode
+
+- Fixed: every number was rounded to the nearest half, also for a function with a formula.
+  y = x² at x = 0.5 was "y 0.5" (it is 0.25), a zero at 1.73 was "1.5", the limit of
+  (2^x − 1)/x at 0 was "0.5" (it is 0.69), and a tangent line's heights were all "1". A function
+  with a formula, or one drawn here, is now said to two decimals whatever the setting. The
+  setting (Help > Settings > Graph sound > Numbers you hear) is for curves read from a page: the
+  nearest half only when the number is within 0.06 of it, otherwise one decimal.
+- A slope has two decimals: 0.25 is not "0.3", and a slope of 0.0002 is not "flat". A slope of
+  6000 is said as 6000, not as "nearly vertical".
+
+### Limits
+
+- Fixed: "could not estimate" where the limit exists but the formula loses digits close to the
+  point: (1 − cos x)/x² at 0 is 0.5, x·sin(1/x) at 0 is 0.
+- Fixed: e^(1/x) at 0 from the right was "no limit, the curve is only on the left": the heights
+  there are too large for the computer to hold. It goes up to infinity.
+- A curve that keeps swinging (sin(1/x) at 0) is said to have no limit, with the heights it
+  swings between, instead of "could not estimate".
+- A side with no curve is "no curve", not "no limit".
+
+### Tangent lines and slopes
+
+- Fixed: a tangent line was moved a millionth off its point by rounding, so the curve "crossed"
+  it twice right beside the point where it touches (y = sin x at x = 1.5).
+- Tab keeps the cursor at the same x: from a curve to its tangent at x = 0.25 it stays on the
+  point where they touch (it moved to 0.5, the nearest step).
+- A secant line through two points on different sides of a jump or an asymptote says that the
+  curve is broken between them.
+- Fixed: at many x that are not round (y = x² at x = −4.9963), the slope "could not be measured
+  reliably" and no tangent was added. The slope is now measured with steps that do not lose it
+  in rounding.
+- Fixed: a corner whose two slopes are close (slope 2, then 2.1) got a tangent line. For an
+  equation or a drawing, sides that differ even a little are a corner.
+- A cusp (y = x^(2/3) at 0) is said as a cusp, not as a corner.
+- A tangent line is said to two decimals, like the height: "y = 1.67", not "y = 1.66667".
+
+### Derivative curves
+
+- Fixed: the derivative of x|x| at 0 was "0.00001" (it is 0), and its second derivative there was
+  "0, continuous": it does not exist (minus 2 from the left, 2 from the right), which is now a
+  jump with two open dots.
+- Fixed: the derivative of x^(1/3) at 0 was "a hole, the curve approaches 155". It goes up to
+  infinity.
+- A valley or peak of a derivative curve "at 0.00004" is at 0. A derivative curve is named in
+  full where another curve crosses it ("crosses derivative of y = x^2", not "derivative of y").
+- e^(-x^2) has its horizontal asymptote y = 0 in the description (it was left out).
+
 ## 0.8.0 (beta)
 
 ### Graph sound: one scale for each graph, one voice at a time

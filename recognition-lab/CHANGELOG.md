@@ -1,5 +1,22 @@
 # Recognition Lab changelog
 
+## Unreleased - 2026-11-17 vector graphs checked against known functions (version number unchanged: 0.7.0)
+
+- Vector graphs (graph reader version 4): sampled curves keep four decimals (two before; slopes
+  beside an asymptote could not be measured); turning points are the top of a parabola fitted
+  through the points around them (2 sin x: 1.57, was 1.59); an arrow's tip is its point furthest
+  along the curve (a barb was taken for it); straight pieces get their x-axis crossings (an end on
+  the axis is not a crossing) and their y-axis crossing; curves get their y-axis crossing; a turn on
+  the x-axis touches it; an end on the frame of the grid with no arrow or dot "reaches the edge of
+  the graph" (not said of dashed or vertical lines).
+- Validation: `test-fixtures/drawn-graphs.tex` (thirteen graphs drawn in pgfplots from known
+  functions, in the course notes' style), typeset with Tectonic to `drawn-graphs.pdf`; six new
+  tests in `test_vector_graph.py` compare readings with the functions. The five exact graphs in the
+  owner's course PDFs were read with the old and the new reader and every changed description was
+  checked by hand. Not done: NVDA listening. `test_dots_end_the_curve_and_a_corner_name_labels_it`
+  fails before and after this change: the homework 4.1 PDF on this computer is now a copy printed
+  from Math Notebook (no drawn graphs in it), not the original.
+
 ## Unreleased - 2026-11-09 model lifetime and vector graph labels (version number unchanged: 0.7.0)
 
 - The model server no longer outlives the program that started it. It stayed loaded for a day after Math Notebook had closed (7.4 GB of GPU memory, 13 GB of RAM): ending a program on Windows does not end the programs it started, and llama-server's `--sleep-idle-seconds` freed nothing. `vlm_helper` now puts the server in a Windows job that ends it with the starting process, however that process ends, and stops a server it started after 10 minutes without use (`IDLE_STOP_SECONDS`), never while a request is being answered. `VLM_KEEP_SERVER=1` keeps the old behaviour for benchmark scripts.

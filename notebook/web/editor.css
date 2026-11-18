@@ -21,6 +21,8 @@ body.editor main { max-width: none; padding: 0; }
   padding: .5rem .75rem; border-radius: 4px;
 }
 .figure-line { border-left-color: var(--muted); }
+/* The page's own picture under the words of a line read from a PDF (editor.js, showPictures). */
+.doc [data-picture] { background-repeat: no-repeat; background-position: left .75rem bottom .5rem; }
 .warned { text-decoration: underline wavy var(--check-line); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .doc table { margin: .75rem 0; }
 .status {
@@ -68,6 +70,8 @@ dialog .buttons { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem
   .doc hr.page-break { break-after: page; border: 0; margin: 0; height: 0; }
   .doc h1, .doc h2, .doc h3, .doc h4 { break-after: avoid; }
   .eq-line, .doc tr, .graph-line, .figure-line { break-inside: avoid; }
+  /* Backgrounds are not printed; a line's picture is. */
+  .doc [data-picture] { background-color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .doc td, .doc th { border-color: #000; }
 }
 
@@ -145,6 +149,7 @@ math mi.tml-italic { font-style: italic; }
 .edit-preview { stroke: var(--check-line); stroke-width: 2; stroke-dasharray: 6 4; }
 .edit-blocked { stroke: var(--check-line); stroke-width: 3; fill: none; }
 .graph-mode svg text.edit-label { font-size: 12px; fill: var(--text); }
+.graph-mode svg text.graph-mark { font-size: 15px; font-style: italic; font-weight: bold; fill: var(--text); }
 .graph-menu [role="menu"] { display: grid; gap: .3rem; }
 .graph-menu [role="menu"] button { text-align: left; width: 100%; }
 .edit-point.other { fill: var(--muted); }

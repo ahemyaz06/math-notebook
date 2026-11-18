@@ -116,9 +116,10 @@ function tokenize(source) {
   return tokens;
 }
 
-export function compileExpression(source) {
-  // Long enough for functions written from LaTeX, which carry many brackets.
-  if (String(source || '').length > 400) throw new Error('Expression is too long.');
+export function compileExpression(source, maxLength = 400) {
+  // Long enough for functions written from LaTeX, which carry many brackets. (The notebook asks
+  // for more room for the derivatives it works out by rule, which nobody types.)
+  if (String(source || '').length > maxLength) throw new Error('Expression is too long.');
   const tokens = tokenize(source);
   const variables = new Set();
   const domainChecks = [];
@@ -309,7 +310,7 @@ function holeLimit(fn, x) {
   return Number((left / 2 + right / 2).toPrecision(9));
 }
 
-export function compileEquation(value) {
+export function compileEquation(value, maxLength = 400) {
   const cleaned = String(value || '')
     .trim()
     .replace(/^f\s*\(\s*x\s*\)\s*=/i, 'y=')
@@ -321,8 +322,8 @@ export function compileEquation(value) {
   const [leftText, rightText] = pieces.map((p) => p.trim());
   if (!leftText || !rightText) throw new Error('Both sides of the equation are required.');
 
-  const left = compileExpression(leftText);
-  const right = compileExpression(rightText);
+  const left = compileExpression(leftText, maxLength);
+  const right = compileExpression(rightText, maxLength);
   const explicit =
     leftText.toLowerCase() === 'y' && !right.variables.has('y')
       ? right
@@ -445,12 +446,15 @@ export function detectLandmarks(graph, boundary = 10, customPoints = []) {
       const lim = graph.limitAt(x);
       // At an off-grid denominator zero, the closest representable x can
       // still evaluate. Probe both sides there as for an exact zero.
-      const y = lim.defined ? holeLimit((v) => graph.yAt(v), x) : lim.hole ? lim.y : null;
+      // A graph may bring its own limits (the Math Notebook's do, so they agree with its other
+      // answers): holeNear(x), the height both sides come to or null; sideLimit(x, dir).
+      const y = lim.defined ? (graph.holeNear ? graph.holeNear(x) : holeLimit((v) => graph.yAt(v), x)) : lim.hole ? lim.y : null;
       if (y !== null) {
         addLandmark('open-point', x, y, `Open point (hole) at (${formatNumber(x)}, ${formatNumber(y)})`);
       } else {
-        const left = estimateSide((v) => graph.yAt(v), x, -1);
-        const right = estimateSide((v) => graph.yAt(v), x, 1);
+        const side = (dir) => (graph.sideLimit ? graph.sideLimit(x, dir) : estimateSide((v) => graph.yAt(v), x, dir));
+        const left = side(-1);
+        const right = side(1);
         if (left?.infinite || right?.infinite) {
           addLandmark('asymptote', x, null, `Vertical asymptote at x = ${formatNumber(x)}`);
         } else if (left?.value !== undefined && right?.value !== undefined) {

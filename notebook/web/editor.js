@@ -2,9 +2,9 @@
 // from the desktop app's menu bar (Alt), so the page itself has no buttons.
 import temml from './vendor/temml.mjs';
 import { parseBlocks, tableCells } from './markdown.js';
-import { plainToLatex, latexToPlain, splitComment, splitDomain } from './equation.js';
+import { plainToLatex, latexToPlain, splitComment, splitDomain, mixedToLatex } from './equation.js';
 import { mathmlToLatex, latexToMathml } from './mathml.js';
-import { makeDocx } from './docx.js';
+import { makeDocx, PICTURE_ALT, pictureSize } from './docx.js';
 import { brailleHtml } from './braille.js';
 import { makeGraph, studentGraph, HIDEABLE, parseCondition, compileFunction } from './graphs.js';
 import { checkLine } from './linecheck.js';
@@ -127,24 +127,180 @@ function inlineInto(parent, text) {
   return parent;
 }
 
+// ---------- the page's own picture on a graph or picture line ----------
+
+// A line read from a PDF carries the picture the page shows there (data-picture, a name in
+// this list). The picture is drawn by a style rule under the line's words, so it is not part of
+// the text: the caret, NVDA and the Word, LaTeX and braille exports pass it by. It shows on
+// screen, in print and in an exported PDF, where a sighted reader sees it with its description.
+const pictures = new Map(); // name -> { src: a PNG as a data address, width, height }
+const pictureStyle = document.head.appendChild(document.createElement('style'));
+const PICTURE_SIDE = 360; // the longest side on the page, in CSS pixels
+function showPictures() {
+  pictureStyle.textContent = [...pictures].map(([name, p]) => {
+    const scale = Math.min(1, PICTURE_SIDE / Math.max(p.width, p.height));
+    const w = Math.round(p.width * scale), h = Math.round(p.height * scale);
+    return `.doc [data-picture="${name}"] { background-image: url("${p.src}"); background-size: ${w}px ${h}px; padding-bottom: calc(${h}px + 1rem); }`;
+  }).join('\n');
+}
+// Pictures from a notebook file: only PNG data with plain names, so a file can put nothing
+// else into the style rule.
+function takePictures(list) {
+  for (const [name, p] of Object.entries(list || {})) {
+    if (!/^[\w-]+$/.test(name) || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(p?.src || '')) continue;
+    const width = Number(p.width), height = Number(p.height);
+    if (width > 0 && height > 0) pictures.set(name, { src: p.src, width, height });
+  }
+  showPictures();
+}
+// The pictures of the lines in a piece of the document, for saving with it.
+function picturesIn(html) {
+  const out = {};
+  for (const [, name] of html.matchAll(/data-picture="([\w-]+)"/g)) if (pictures.has(name)) out[name] = pictures.get(name);
+  return Object.keys(out).length ? out : undefined;
+}
+async function loadPicture(name, address) {
+  try {
+    const response = await fetch(address);
+    if (!response.ok) return;
+    const bitmap = await createImageBitmap(await response.blob());
+    // Kept at 900 pixels on its longest side: sharp in print, and a small file.
+    const scale = Math.min(1, 900 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    pictures.set(name, { src: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height });
+    showPictures();
+  } catch { /* the words stand without their picture */ }
+}
+function withPicture(line, docId, figure) {
+  const file = /^([\w-]+)\.png$/.exec(figure?.picture || '');
+  if (!file || !/^[a-f0-9]{64}$/.test(docId || '')) return line;
+  const name = `${docId.slice(0, 12)}-${file[1]}`;
+  line.dataset.picture = name;
+  loadPicture(name, `/api/doc/${docId}/image/${figure.picture}`);
+  return line;
+}
+
 // ---------- turning a read PDF page into document blocks ----------
 
-function graphLine(graph, prefix = 'Graph') {
+// ---------- a graph's line in the document ----------
+
+// A graph's line is its description. A graph read from a PDF has a long one (where the curve
+// starts, turns and crosses), so its line starts short: the first sentence, and F4 shows or
+// hides the rest (Shift+F4: for every graph). Its numbers are measured from the drawing, to two
+// decimals: a valley at x = 1 is read as 1.01. F2 goes between those numbers and rounded ones.
+const LINE_END = 'Press Enter to explore it by sound.';
+const LINE_HIDDEN = 'The rest of the description is hidden; F4 shows it.';
+let lineNumbers = 'rounded'; // Settings, graph_line_numbers: 'rounded' or 'exact'
+// Rounded: the nearest half when the number is that close to it (within 0.06: 1.01 is 1, 1.94
+// is 2, 3.49 is 3.5), otherwise one decimal (2.71 is 2.7, never 2.5: that would be a wrong answer).
+function tidyNumber(v) {
+  const half = Math.round(v * 2) / 2;
+  return Math.abs(v - half) <= 0.06 + 1e-9 ? half : Math.round(v * 10) / 10;
+}
+const tidyNumbers = (text) => text.replace(/(−|-|minus )?(\d+\.\d+)/g, (m, sign, digits) => {
+  const r = tidyNumber(Number(digits));
+  return `${r === 0 ? '' : sign || ''}${r}`;
+});
+// Only a description read from a page is rounded: one made from a formula has the formula's own numbers.
+const readFromPage = (graph) => Array.isArray(graph?.curves) && graph.read === undefined && !graph.asEquation
+  && !graph.functions?.length && !graph.equations?.length;
+function graphWords(graph) {
+  const words = graph?.summary || 'no description.';
+  return lineNumbers === 'rounded' && readFromPage(graph) ? tidyNumbers(words) : words;
+}
+// The first sentence, when there is more after it (a full stop inside a number ends nothing).
+function firstSentence(words) {
+  const first = /^.*?[.!?](?=\s+\S)/.exec(words)?.[0];
+  return first && first.length < words.trim().length ? first : null;
+}
+const canShorten = (graph) => Boolean(firstSentence(graph?.summary || ''));
+function lineText(prefix, graph, short = false) {
+  const words = graphWords(graph);
+  const first = short ? firstSentence(words) : null;
+  return first ? `${prefix}: ${first} ${LINE_HIDDEN} ${LINE_END}` : `${prefix}: ${words} ${LINE_END}`;
+}
+const linePrefix = (line) => /^[^:]{1,40}(?=:)/.exec(line.textContent)?.[0] || 'Graph';
+// A graph line's words, written again from its graph (short or full, numbers as chosen).
+function writeGraphLine(line, graph = graphs.get(line.dataset.graphId)) {
+  if (!graph) return;
+  if (line.dataset.short && !canShorten(graph)) line.removeAttribute('data-short');
+  const text = lineText(linePrefix(line), graph, line.dataset.short === 'true');
+  if (line.textContent !== text) line.textContent = text;
+}
+// After a document is opened or the numbers are changed: every line that can differ.
+function refreshGraphLines(root = doc) {
+  const sel = getSelection();
+  const at = root === doc && sel.rangeCount ? blockOf(sel.anchorNode) : null;
+  for (const line of root.querySelectorAll('.graph-line[data-graph-id]')) {
+    const graph = graphs.get(line.dataset.graphId);
+    if (!graph || !(line.dataset.short || readFromPage(graph))) continue;
+    const before = line.textContent;
+    writeGraphLine(line, graph);
+    if (line === at && line.textContent !== before) placeCaretIn(line);
+  }
+}
+function useLineNumbers(values) {
+  const next = values?.graph_line_numbers === 'exact' ? 'exact' : 'rounded';
+  if (next === lineNumbers) return;
+  lineNumbers = next;
+  refreshGraphLines();
+}
+
+function graphLine(graph, prefix = 'Graph', short = false) {
   const id = newId();
   graphs.set(id, graph);
   const p = el('p', { class: 'graph-line', 'data-graph-id': id });
-  p.textContent = `${prefix}: ${graph.summary || 'no description.'} Press Enter to explore it by sound.`;
+  if (short && canShorten(graph)) p.dataset.short = 'true';
+  p.textContent = lineText(prefix, graph, p.dataset.short === 'true');
   return p;
 }
 
-function figureBlocks(block, figure) {
+// F4 on a graph line: its description shown in full, or only its first sentence. Shift+F4:
+// every graph in the document (all hidden, unless one already is: then all shown).
+function toggleGraphWords(all = false) {
+  const here = currentBlock();
+  const lines = all ? [...doc.querySelectorAll('.graph-line')] : here?.classList.contains('graph-line') ? [here] : [];
+  if (!lines.length) { say(all ? 'There is no graph in this document.' : 'Move to a graph line first. F4 there shows or hides its description; Shift+F4 does that for every graph.'); return; }
+  const able = lines.filter((line) => canShorten(graphs.get(line.dataset.graphId)));
+  if (!able.length) { say(all ? 'No graph here has more than one sentence of description.' : 'This description is one sentence; there is nothing to hide.'); return; }
+  const hide = all ? able.every((line) => line.dataset.short !== 'true') : able[0].dataset.short !== 'true';
+  for (const line of able) {
+    if (hide) line.dataset.short = 'true'; else line.removeAttribute('data-short');
+    writeGraphLine(line);
+  }
+  if (here?.classList.contains('graph-line')) placeCaretIn(here);
+  setDirty(true);
+  const count = `${able.length} ${able.length === 1 ? 'graph' : 'graphs'}`;
+  if (all) say(hide ? `Descriptions hidden for ${count}. Shift+F4 shows them again.` : `Descriptions shown for ${count}.`);
+  else say(hide ? 'Description hidden. F4 shows it again.' : `Description shown. ${graphWords(graphs.get(able[0].dataset.graphId))}`);
+}
+
+// F2: the numbers in the descriptions of graphs read from a PDF, rounded or as read. It is a
+// setting (kept for the next document too), not a change to this document.
+async function toggleLineNumbers() {
+  const next = lineNumbers === 'rounded' ? 'exact' : 'rounded';
+  useLineNumbers({ graph_line_numbers: next });
+  say(next === 'rounded'
+    ? 'Graph descriptions now have rounded numbers: the nearest half when the number is that close, otherwise one decimal. F2 shows them as read.'
+    : 'Graph descriptions now have the numbers as read from the page, to two decimals. F2 rounds them.');
+  try {
+    const result = await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph_line_numbers: next }) });
+    if (savedSettings) savedSettings = result;
+  } catch { /* it still holds until the notebook is closed */ }
+}
+
+function figureBlocks(block, figure, docId) {
   const out = [];
+  const pictured = (line) => withPicture(line, docId, figure);
   const rows = block.lines.filter((l) => tableCells(l));
   if (rows.length >= 2) out.push(tableBlock(rows));
   const numbers = figure?.numbers;
   if (numbers?.status === 'exact') {
     const g = numbers.graph;
-    out.push(graphLine({ summary: numbers.summary, span: g.axis_span, curves: g.curves, points: g.points }));
+    out.push(pictured(graphLine({ summary: numbers.summary, span: g.axis_span, curves: g.curves, points: g.points, ...(g.marks?.length ? { marks: g.marks } : {}) }, 'Graph', true)));
     return out;
   }
   const description = figure?.description || block.lines.filter((l) => !tableCells(l) && !/^\|[\s:|-]+\|$/.test(l.trim())).join(' ');
@@ -159,9 +315,9 @@ function figureBlocks(block, figure) {
   // A table's own one-line summary ("A table with 3 rows") adds nothing once the table is shown.
   const text = description.replace(/\s+/g, ' ').trim();
   if (text && !(rows.length && /^a table/i.test(text))) {
-    out.push(el('p', { class: 'figure-line' }, `Picture, AI description that may be wrong: ${text}`));
+    out.push(pictured(el('p', { class: 'figure-line' }, `Picture, AI description that may be wrong: ${text}`)));
   } else if (!out.length) {
-    out.push(el('p', { class: 'figure-line' }, `Picture: ${figure?.skipped || 'no description could be made.'}`));
+    out.push(pictured(el('p', { class: 'figure-line' }, `Picture: ${figure?.skipped || 'no description could be made.'}`)));
   }
   return out;
 }
@@ -180,6 +336,18 @@ function tableBlock(rows) {
     table.append(tr);
   });
   return table;
+}
+
+// A question is its "Problem" or "Example" heading, its text and its graphs, up to the answer box
+// after it. Those are read-only (data-question), so a key pressed by mistake cannot change them.
+// A line the checker flagged stays editable: the fix may be in it. Answer boxes are editable.
+// The developer shortcut (Ctrl+Shift+Alt+U) makes everything editable until pressed again.
+let everythingEditable = false;
+function lockQuestions(root = doc) {
+  for (const node of root.querySelectorAll('[data-question]')) {
+    if (everythingEditable) node.removeAttribute('contenteditable');
+    else node.setAttribute('contenteditable', 'false');
+  }
 }
 
 function pageBlocks(record, docId) {
@@ -217,7 +385,7 @@ function pageBlocks(record, docId) {
     else if (block.type === 'figure') {
       const figure = figures.get(block.start);
       pictures += 1;
-      made = figure?.pending ? [waitingFigure(docId, record.page, figure, pictures)] : figureBlocks(block, figure);
+      made = figure?.pending ? [waitingFigure(docId, record.page, figure, pictures)] : figureBlocks(block, figure, docId);
     }
     else made = [inlineInto(el('p'), block.text)];
     // Differences the checker found become review notes on the blocks they belong to.
@@ -226,12 +394,13 @@ function pageBlocks(record, docId) {
       made[0].classList.add('warned');
       made[0].dataset.warning = JSON.stringify(notes);
     }
+    if (answerFor) for (const node of made) if (!node.classList.contains('warned')) node.dataset.question = '';
     out.push(...made);
   }
   closeAnswer();
   for (const figure of (record.figures || []).filter((f) => f.unmentioned && f.numbers?.graph)) {
     const g = figure.numbers.graph;
-    out.push(graphLine({ summary: figure.numbers.summary, span: g.axis_span, curves: g.curves, points: g.points }, 'Graph the reader did not mention'));
+    out.push(withPicture(graphLine({ summary: figure.numbers.summary, span: g.axis_span, curves: g.curves, points: g.points, ...(g.marks?.length ? { marks: g.marks } : {}) }, 'Graph the reader did not mention', true), docId, figure));
   }
   return out;
 }
@@ -294,6 +463,7 @@ function openAttachedNotebook(text, name) {
     if (data.format !== 'math-notebook') throw new Error('The attached file is not a Math Notebook document.');
     const holder = el('div');
     holder.append(...cleanNodes(data.html || ''));
+    takePictures(data.pictures);
     // Graph ids are made new, so they never clash with this document's graphs.
     for (const line of holder.querySelectorAll('[data-graph-id]')) {
       const graph = data.graphs?.[line.dataset.graphId];
@@ -301,6 +471,7 @@ function openAttachedNotebook(text, name) {
       if (graph) graphs.set(id, graph);
       line.dataset.graphId = id;
     }
+    refreshGraphLines(holder);
     doc.append(...holder.childNodes);
     setDirty(true);
   }
@@ -335,6 +506,7 @@ async function pollImport(job) {
   while (ready.has(job.next) || errors[job.next]) {
     if (ready.has(job.next)) {
       doc.append(...pageBlocks(ready.get(job.next), job.id));
+      lockQuestions();
       if (job.next === 1) say('Page 1 is in the document. Press F8 to go to the first review note.');
     } else {
       const p = el('p', { class: 'warned', 'data-warning': JSON.stringify([`Page ${job.next} could not be read: ${errors[job.next]}`]) }, `Page ${job.next} could not be converted.`);
@@ -391,7 +563,7 @@ function fillWaitingFigures(docId, ready) {
     const [, page, line] = holder.dataset.figure.split(':');
     const figure = ready.get(Number(page))?.figures?.find((f) => f.line === Number(line));
     if (!figure || figure.pending) continue;
-    const nodes = figureBlocks({ lines: [] }, figure);
+    const nodes = figureBlocks({ lines: [] }, figure, docId);
     if (holder.textContent.includes('its description is on the way')) holder.replaceWith(...nodes);
     else { holder.removeAttribute('data-figure'); holder.classList.remove('waiting'); holder.after(...nodes); }
     filled += 1;
@@ -414,18 +586,20 @@ function serialize({ html } = {}) {
     const keep = studentView.graphs;
     const ids = new Set([...studentView.html.matchAll(/data-graph-id="([^"]+)"/g)].map((m) => m[1]));
     return JSON.stringify({ format: 'math-notebook', version: 1, name: docName, teacher: true, html: html ?? studentView.html,
-      graphs: Object.fromEntries([...keep].filter(([id]) => ids.has(id))) });
+      graphs: Object.fromEntries([...keep].filter(([id]) => ids.has(id))), pictures: picturesIn(html ?? studentView.html) });
   }
+  const saved = html ?? emptyEquations(doc.cloneNode(true)).innerHTML;
   return JSON.stringify({
     format: 'math-notebook', version: 1, name: docName, teacher: teacherMode || undefined,
-    html: html ?? emptyEquations(doc.cloneNode(true)).innerHTML,
+    html: saved,
     graphs: Object.fromEntries([...graphs].filter(([id]) => used.has(id))),
+    pictures: picturesIn(saved),
   });
 }
 
 const ALLOWED_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'P', 'DIV', 'SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'BR', 'HR', 'TABLE', 'TBODY', 'THEAD', 'TR', 'TH', 'TD', 'UL', 'OL', 'LI']);
-const ALLOWED_ATTRS = new Set(['class', 'data-latex', 'data-display', 'data-graph-id', 'data-warning', 'data-page', 'data-placeholder', 'data-figure', 'scope',
-  'data-teacher', 'data-student-note', 'start', 'data-level']);
+const ALLOWED_ATTRS = new Set(['class', 'data-latex', 'data-display', 'data-graph-id', 'data-short', 'data-picture', 'data-warning', 'data-page', 'data-placeholder', 'data-figure', 'scope',
+  'data-teacher', 'data-student-note', 'start', 'data-level', 'data-question']);
 // Pasted from web pages and other programs: only the structure is kept, never their styles or classes.
 const PASTE_ATTRS = new Set(['scope', 'start']);
 
@@ -465,6 +639,7 @@ function cleanNodes(html, attrs = ALLOWED_ATTRS) {
 function sanitizeInto(target, html) {
   target.replaceChildren(...cleanNodes(html));
   markComments(target); // a saved file keeps the class; the role is put back here
+  lockQuestions(target);
 }
 
 function loadNotebook(text, path, recovered = null) {
@@ -474,7 +649,9 @@ function loadNotebook(text, path, recovered = null) {
   if (studentView) togglePreview(false);
   graphs.clear();
   for (const [id, g] of Object.entries(data.graphs || {})) graphs.set(id, g);
+  takePictures(data.pictures);
   sanitizeInto(doc, data.html || '');
+  refreshGraphLines();
   setTeacherMode(Boolean(data.teacher), true);
   docName = data.name || 'Untitled';
   filePath = path;
@@ -497,13 +674,19 @@ function loadNotebook(text, path, recovered = null) {
   for (const id of sources) pollPictures({ id, documentRevision, name: docName });
 }
 
-function save(as = false) {
+// save(true, 'pdf') is File > Save as > PDF. The save box lists every kind of file (notebook,
+// PDF, Word, web page, braille), the one asked for first; Ctrl+S on a notebook never saved
+// opens it too. Saving before closing offers the notebook only.
+function save(as = false, first = 'notebook', { notebookOnly = false } = {}) {
   // Repeated Ctrl+S and Save on close must wait for the same save dialog and write.
-  if (!saving) saving = saveNotebook(as).finally(() => { saving = null; });
+  if (!saving) saving = saveNotebook(as, first, notebookOnly).finally(() => { saving = null; });
   return saving;
 }
 
-async function saveNotebook(as) {
+// The other kinds of file, written to a file chosen in the save box.
+const SAVE_COPY = { pdf: (file) => exportPdf(file), docx: (file) => exportDocx(file), html: (file) => exportHtml(file), brf: (file) => exportBraille(file) };
+
+async function saveNotebook(as, first = 'notebook', notebookOnly = false) {
   if (studentView) {
     say('Student preview. Use Tools, Teacher, Save student copy, or turn off preview to save the teacher notebook.');
     return;
@@ -512,9 +695,16 @@ async function saveNotebook(as) {
   const target = documentRevision;
   const content = serialize();
   const revision = editRevision;
+  let chosenFile = as ? null : filePath;
+  if (!chosenFile && desktop.chooseSave) {
+    const choice = await desktop.chooseSave({ name: docName, first, only: notebookOnly ? 'notebook' : null });
+    if (!choice || target !== documentRevision) return;
+    if (choice.kind !== 'notebook') { await SAVE_COPY[choice.kind](choice.path); return; }
+    chosenFile = choice.path;
+  } else if (first !== 'notebook') { await SAVE_COPY[first](null); return; } // its own save box
   let saved;
   try {
-    saved = await desktop.save({ path: as ? null : filePath, name: `${docName}.mathnb`, content });
+    saved = await desktop.save({ path: chosenFile, name: `${docName}.mathnb`, content });
   } catch {
     say('Could not save the notebook. Your edits are still open. Try Save As to choose another location.');
     return;
@@ -676,8 +866,10 @@ function restoreUndo(from, to, word) {
   openText = null;
   doc.innerHTML = state.html; // our own document, as it was: already clean
   fillEquations(doc);
+  lockQuestions();
   graphs.clear();
   for (const [id, g] of state.graphs) graphs.set(id, g);
+  refreshGraphLines(); // the numbers may have been changed (F2) since this step
   doc.focus();
   restoreDraftCaret(state.caret);
   undoBase = state;
@@ -763,11 +955,26 @@ recoveryDialog.querySelector('form').addEventListener('submit', async (event) =>
   }
 });
 
-function exportHtml() {
+// After a PDF, Word, web page or braille copy: the notebook file itself is a separate save.
+const notebookStillUnsaved = () => (dirty ? ' Your notebook itself is not saved yet; Ctrl+S saves it.' : '');
+
+function exportHtml(file = null) {
   settleEquationText();
-  const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${docName.replace(/[<&]/g, '')}</title></head><body>${doc.innerHTML}</body></html>`;
-  desktop?.save({ path: null, name: `${docName}.html`, content: page, filters: [{ name: 'Web page', extensions: ['html'] }] })
-    .then((p) => p && say(`Exported ${p.split(/[\\/]/).pop()}. Word can open this file.`));
+  // A web page has no style rule to draw a line's picture, so each one becomes a real picture
+  // after its line.
+  const body = doc.cloneNode(true);
+  for (const line of body.querySelectorAll('.graph-line[data-short]')) { line.removeAttribute('data-short'); writeGraphLine(line); }
+  for (const line of body.querySelectorAll('[data-picture]')) {
+    const picture = pictures.get(line.dataset.picture);
+    if (!picture) continue;
+    const [width, height] = pictureSize(picture);
+    const holder = el('p');
+    holder.append(el('img', { src: picture.src, alt: PICTURE_ALT, width, height }));
+    line.after(holder);
+  }
+  const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${docName.replace(/[<&]/g, '')}</title></head><body>${body.innerHTML}</body></html>`;
+  return desktop?.save({ path: file, name: `${docName}.html`, content: page, filters: [{ name: 'Web page', extensions: ['html'] }] })
+    .then((p) => p && say(`Saved ${p.split(/[\\/]/).pop()} as a web page. Word can open this file.${notebookStillUnsaved()}`));
 }
 
 // ---------- blocks (from a .tex file) as the document ----------
@@ -824,9 +1031,10 @@ function blocksToNodes(blocks) {
   return out;
 }
 
-async function importTex() {
+// Import > LaTeX, or a .tex chosen in Import > Any file (then the file, with its text, is given).
+async function importTex(chosen = null) {
   if (!desktop) { say('Importing needs the desktop app.'); return; }
-  const file = await desktop.openText({ title: 'Import LaTeX', filters: [{ name: 'LaTeX', extensions: ['tex', 'latex', 'ltx'] }] });
+  const file = chosen || await desktop.openText({ title: 'Import LaTeX', filters: [{ name: 'LaTeX', extensions: ['tex', 'latex', 'ltx'] }] });
   if (!file) return;
   let result;
   try { result = texToBlocks(file.content); } catch (error) { say(`Could not read ${file.path.split(/[\\/]/).pop()}: ${error.message}`); return; }
@@ -949,45 +1157,50 @@ function documentBlocks(root = doc) {
       if (eqs.length === 1 && node.textContent.trim() === eqs[0].textContent.trim() && (node.classList.contains('eq-line') || eqs[0].dataset.display === 'true')) {
         blocks.push({ type: 'equation', latex: eqs[0].dataset.latex });
       } else {
-        blocks.push({ type: 'paragraph', runs: inlineRuns(node) });
+        // A line read from a PDF takes its picture along (Word shows it after the words).
+        // A graph's description is whole in Word and braille, where F4 cannot show the rest.
+        const picture = pictures.get(node.dataset.picture);
+        const whole = root === doc && node.dataset.short === 'true' && graphs.get(node.dataset.graphId);
+        blocks.push({ type: 'paragraph', runs: whole ? [{ text: lineText(linePrefix(node), whole) }] : inlineRuns(node), ...(picture ? { picture } : {}) });
       }
     }
   }
   return blocks;
 }
 
-async function exportDocx() {
-  if (!desktop) { say('Exporting needs the desktop app.'); return; }
+async function exportDocx(file = null) {
+  if (!desktop) { say('Saving needs the desktop app.'); return; }
   const { bytes, problems } = makeDocx(documentBlocks(), docName);
-  const saved = await desktop.saveBinary({ name: `${docName}.docx`, bytes, filters: [{ name: 'Word document', extensions: ['docx'] }] });
+  const saved = await desktop.saveBinary({ path: file, name: `${docName}.docx`, bytes, filters: [{ name: 'Word document', extensions: ['docx'] }] });
   if (!saved) return;
   const name = saved.split(/[\\/]/).pop();
-  say(problems.length
-    ? `Exported ${name}, but ${problems.length} ${problems.length === 1 ? 'equation' : 'equations'} could not be made into Word equations and are written as LaTeX text: ${problems.join('; ')}`
-    : `Exported ${name}. Every equation is a Word equation.`);
+  say((problems.length
+    ? `Saved ${name} as a Word document, but ${problems.length} ${problems.length === 1 ? 'equation' : 'equations'} could not be made into Word equations and are written as LaTeX text: ${problems.join('; ')}`
+    : `Saved ${name} as a Word document. Every equation is a Word equation.`) + notebookStillUnsaved());
 }
 
-async function exportPdf() {
-  if (!desktop) { say('Exporting needs the desktop app.'); return; }
-  const saved = await desktop.exportPdf({ name: `${docName}.pdf`, notebook: serialize() });
-  if (saved) say(`Exported ${saved.split(/[\\/]/).pop()}. It opens like any PDF; this notebook is inside it, so Math Notebook opens it exactly. Equations in a PDF are hard for screen readers; for reading with NVDA, share the Word file too.`);
+async function exportPdf(file = null) {
+  if (!desktop) { say('Saving needs the desktop app.'); return; }
+  const saved = await desktop.exportPdf({ path: file, name: `${docName}.pdf`, notebook: serialize() });
+  if (saved) say(`Saved ${saved.split(/[\\/]/).pop()} as a PDF. It opens like any PDF; this notebook is inside it, so Math Notebook opens it exactly. Equations in a PDF are hard for screen readers; for reading with NVDA, share the Word file too.${notebookStillUnsaved()}`);
 }
 
-// File > Export as braille: BrailleBlaster makes the .brf from the document's headings, text and
+// File > Save as > Braille: BrailleBlaster makes the .brf from the document's headings, text and
 // MathML equations (braille.js, braille.py). It has to be installed; the notebook says so if not.
-async function exportBraille() {
-  if (!desktop) { say('Exporting needs the desktop app.'); return; }
+async function exportBraille(file = null) {
+  if (!desktop) { say('Saving needs the desktop app.'); return; }
   const page = brailleHtml(documentBlocks(), docName);
   say('Making braille with BrailleBlaster. A long document takes a minute or two.');
-  const result = await desktop.exportBraille({ name: `${docName}.brf`, page });
-  if (!result) { say('Braille export cancelled.'); return; }
+  const result = await desktop.exportBraille({ path: file, name: `${docName}.brf`, page });
+  if (!result) { say('Braille not saved.'); return; }
   if (result.error) { say(result.error); return; }
   const name = result.path.split(/[\\/]/).pop();
   const odd = result.not_six_dot || [];
   say((result.nemeth
-    ? `Exported ${name}: UEB with Nemeth maths, as BrailleBlaster is set.`
-    : `Exported ${name} in ${result.standard}, as BrailleBlaster is set. For Nemeth maths, choose UEB with Nemeth (UEB-PLUS-NEMETH) in BrailleBlaster's Translation settings and export again.`)
-    + (odd.length ? ` ${odd.length} ${odd.length === 1 ? 'line has' : 'lines have'} a cell that is not 6-dot braille (BrailleBlaster could not braille something there, often a matrix): line ${odd.join(', ')} of the file.` : ''));
+    ? `Saved ${name} as braille: UEB with Nemeth maths, as BrailleBlaster is set.`
+    : `Saved ${name} as braille in ${result.standard}, as BrailleBlaster is set. For Nemeth maths, choose UEB with Nemeth (UEB-PLUS-NEMETH) in BrailleBlaster's Translation settings and save again.`)
+    + (odd.length ? ` ${odd.length} ${odd.length === 1 ? 'line has' : 'lines have'} a cell that is not 6-dot braille (BrailleBlaster could not braille something there, often a matrix): line ${odd.join(', ')} of the file.` : '')
+    + notebookStillUnsaved());
 }
 
 // ---------- caret and blocks ----------
@@ -1089,7 +1302,8 @@ function currentLatex() {
   if (input === equationOriginal) return equationOriginal;
   const { code } = splitComment(input);
   if (!latexMode && equationOriginal !== null && code.trim() === equationPlain) return equationOriginal;
-  return latexMode ? code : plainToLatex(code);
+  // In the LaTeX box, plain pieces (sqrt(x), pi, <=) are made LaTeX too.
+  return latexMode ? (mixedToLatex(code) ?? code) : plainToLatex(code);
 }
 
 // A comment after an equation: words in the document, never part of the maths. It is marked
@@ -1305,8 +1519,7 @@ const graphMode = new GraphMode({
   onChange: (graph) => {
     if (!graphReturn) return;
     graphs.set(graphReturn.dataset.graphId, graph);
-    const prefix = /^[^:]{1,40}(?=:)/.exec(graphReturn.textContent)?.[0] || 'Graph';
-    graphReturn.textContent = `${prefix}: ${graph.summary || 'no description.'} Press Enter to explore it by sound.`;
+    writeGraphLine(graphReturn, graph);
     setDirty(true);
   },
   canEdit: () => !studentView,
@@ -1394,7 +1607,11 @@ function spoken(block) {
 // Ctrl+L) is kept as it is, once it is checked to be LaTeX that can be shown.
 function typedToLatex(text) {
   const source = text.trim();
-  if (/\\[A-Za-z]|[_^]\{/.test(source)) {
+  if (/\\|[_^]\{/.test(source)) {
+    // LaTeX with plain text in it (\frac{1}{2}x^2 + sqrt(x)): the plain pieces are made LaTeX
+    // too, or sqrt would be drawn, and read by NVDA, as the four letters s q r t.
+    const whole = mixedToLatex(source);
+    if (whole) return whole;
     try { temml.renderToString(source, { throwOnError: true }); } catch (error) { throw new Error(`This LaTeX has a mistake: ${String(error.message).replace(/^Temml parse error:\s*/i, '')}`); }
     return source;
   }
@@ -1895,8 +2112,11 @@ function checkLineCommand() {
   for (let b = (eq ? blockOf(eq) : block)?.previousElementSibling; b; b = b.previousElementSibling) {
     if (isBlankLine(b)) continue;
     const all = b.querySelectorAll('.eq');
-    if (!all.length || b.classList.contains('graph-line')) break;
-    above.unshift(source(all[all.length - 1]));
+    if (b.classList.contains('graph-line')) break;
+    // A line of text that starts with = (not made an equation yet) is part of the work too.
+    const carried = all.length ? '' : splitComment(b.textContent).code.trim();
+    if (!all.length && !carried.startsWith('=')) break;
+    above.unshift(all.length ? source(all[all.length - 1]) : { plain: carried, latex: null });
   }
   const previous = above.pop() || null;
   let result;
@@ -2670,7 +2890,10 @@ function studentCopy() {
     copyGraphs.set(id, copy);
     line.dataset.graphId = id;
     line.removeAttribute('data-student-note');
-    line.textContent = `Graph: ${copy.summary} Press Enter to explore it by sound.`;
+    // The page's picture would show what the teacher keeps back.
+    if (graph.student?.hideFormula || graph.student?.hide?.length) line.removeAttribute('data-picture');
+    line.removeAttribute('data-short'); // students get the whole description
+    line.textContent = lineText('Graph', copy);
   }
   return { root, graphs: copyGraphs };
 }
@@ -2705,26 +2928,26 @@ async function saveStudentCopy() {
   if (!desktop) { say('Saving needs the desktop app.'); return; }
   const { root, graphs: copyGraphs } = studentCopy();
   const content = JSON.stringify({ format: 'math-notebook', version: 1, name: `${docName} (student copy)`, studentCopy: true,
-    html: root.innerHTML, graphs: Object.fromEntries(copyGraphs) });
+    html: root.innerHTML, graphs: Object.fromEntries(copyGraphs), pictures: picturesIn(root.innerHTML) });
   const saved = await desktop.save({ path: null, name: `${docName} (student copy).mathnb`, content });
   if (saved) say(`Saved the student copy as ${saved.split(/[\\/]/).pop()}. Your own file, with the answers, is unchanged.`);
 }
 
 async function exportStudentDocx() {
-  if (!desktop) { say('Exporting needs the desktop app.'); return; }
+  if (!desktop) { say('Saving needs the desktop app.'); return; }
   const { root } = studentCopy();
   const { bytes } = makeDocx(documentBlocks(root), `${docName} (student copy)`);
   const saved = await desktop.saveBinary({ name: `${docName} (student copy).docx`, bytes, filters: [{ name: 'Word document', extensions: ['docx'] }] });
-  if (saved) say(`Exported the student copy as ${saved.split(/[\\/]/).pop()}.`);
+  if (saved) say(`Saved the student copy as ${saved.split(/[\\/]/).pop()}.`);
 }
 
 async function exportStudentPdf() {
-  if (!desktop) { say('Exporting needs the desktop app.'); return; }
+  if (!desktop) { say('Saving needs the desktop app.'); return; }
   const wasPreview = Boolean(studentView);
   // Only the student copy goes inside: the answers are never in a student's PDF.
   const { root, graphs: copyGraphs } = studentCopy();
   const notebook = JSON.stringify({ format: 'math-notebook', version: 1, name: `${docName} (student copy)`, studentCopy: true,
-    html: root.innerHTML, graphs: Object.fromEntries(copyGraphs) });
+    html: root.innerHTML, graphs: Object.fromEntries(copyGraphs), pictures: picturesIn(root.innerHTML) });
   togglePreview(true, true);
   let saved = null;
   try {
@@ -2732,7 +2955,7 @@ async function exportStudentPdf() {
   } finally {
     if (!wasPreview) togglePreview(false, true);
   }
-  if (saved) say(`Exported the student copy as ${saved.split(/[\\/]/).pop()}. Only the student copy is inside it.`);
+  if (saved) say(`Saved the student copy as ${saved.split(/[\\/]/).pop()}. Only the student copy is inside it.`);
 }
 
 // Commands that change the document wait while the student preview is shown.
@@ -2862,7 +3085,7 @@ async function showKeys(section = null) {
   };
   const extra = [
     ['Most used', [['All keys (this page)', 'F1'], ['The menus', 'Alt'], ['Settings', 'Ctrl+comma'], ['Between the toolbar and the document', 'F6'],
-      ['Save', 'Ctrl+S'], ['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Y or Ctrl+Shift+Z'], ['Export as a Word document', 'Ctrl+Shift+W'], ['Import a PDF', 'Ctrl+Shift+I'],
+      ['Save', 'Ctrl+S'], ['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Y or Ctrl+Shift+Z'], ['Save as a notebook, PDF, Word document and more', 'Ctrl+Shift+S'], ['Save as a Word document', 'Ctrl+Shift+W'], ['Import a PDF', 'Ctrl+Shift+I'],
       ['Read the line with its maths spelled out', 'Ctrl+Shift+R'], ['Find', 'Ctrl+F'], ['Headings list', 'Ctrl+Shift+H']]],
     ['Equations', [['Make the line (or selection) an equation', 'Ctrl+Shift+E'], ['Insert an equation', 'Alt+='],
       ['Edit the equation', 'Ctrl+E, or Enter before it'], ['New line after an equation', 'Enter after it'],
@@ -2875,7 +3098,8 @@ async function showKeys(section = null) {
       ['Comment next to the maths (not part of it)', 'Type # or // after the maths'],
       ['In the equation box: plain text or LaTeX', 'Ctrl+L']]],
     ['Graphs', [['Graph the equation here, or explore the graph here', 'Ctrl+G, or Enter on a graph line'], ['New empty graph to draw on', 'Ctrl+Shift+G'],
-      ['New graph from equations', 'Insert menu']]],
+      ['New graph from equations', 'Insert menu'], ["Show or hide a graph's description (a graph read from a PDF starts short)", 'F4 on its line'],
+      ["Show or hide every graph's description", 'Shift+F4'], ['Numbers in those descriptions: rounded (1.01 is 1) or as read', 'F2']]],
     ['In graph mode', [['Menu of everything you can do here', 'Ctrl+Enter, or M'], ['Step along the function', 'J and K'], ['Play or stop', 'Space'], ['Next and previous point of interest', 'Period and comma'],
       ['Slope here', 'S'], ['Limits from the left and the right', 'L'], ['Slope sound on or off', 'D'],
       ['Hear the lowest and the highest note, and what they stand for', 'N'],
@@ -2947,7 +3171,7 @@ let convertFromSet = false;
 export function detectFormat(text) {
   const s = text.trim();
   if (/^<(?:[\w-]+:)?math[\s>]/i.test(s) || /^<\?xml/.test(s)) return 'mathml';
-  if (/\\[A-Za-z]+|\\[{}|,;!]|[_^]\{/.test(s)) return 'latex';
+  if (/\\[A-Za-z]+|\\[{}|,;:! %]|[_^]\{/.test(s)) return 'latex';
   return 'plain';
 }
 
@@ -2956,7 +3180,7 @@ export function convertMath(text, from, to) {
   if (!text.trim()) return { source, latex: '', output: '' };
   let latex;
   if (source === 'plain') latex = plainToLatex(text);
-  else if (source === 'latex') latex = text.trim();
+  else if (source === 'latex') latex = mixedToLatex(text) ?? text.trim(); // \frac{1}{2} sqrt(x): the plain piece too
   else latex = mathmlToLatex(text);
   // Every conversion goes through MathML once, so broken LaTeX is reported here.
   const mathml = latexToMathml(latex);
@@ -3097,6 +3321,7 @@ let savedSettings = null;
 async function loadSettings() {
   savedSettings = await api('/api/settings');
   graphMode.applySettings(savedSettings.values);
+  useLineNumbers(savedSettings.values);
   return savedSettings;
 }
 
@@ -3186,6 +3411,7 @@ async function saveSettings() {
     const result = await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settingsFromForm()) });
     savedSettings = result;
     graphMode.applySettings(result.values);
+    useLineNumbers(result.values);
     $('settings-dialog').close();
     const readingChanged = ['reading_method', 'reading_model', 'second_model'].some((k) => before[k] !== result.values[k]);
     say(`Settings saved.${readingChanged ? ' PDFs you import from now on are read the new way; pages already in the document stay as they are.' : ''}`);
@@ -3200,6 +3426,7 @@ async function resetSettings(askFirst = true) {
     const result = await api('/api/settings/reset', { method: 'POST' });
     savedSettings = result;
     graphMode.applySettings(result.values);
+    useLineNumbers(result.values);
     if ($('settings-dialog').open) fillSettings(result);
     say('All settings are back to their defaults.');
   } catch (error) {
@@ -3498,6 +3725,27 @@ doc.addEventListener('keydown', (e) => {
   // Chromium's caret does not stop at the equation (it stays put, or lands inside the comment,
   // where the equation is neither said nor reachable), so it is put just after the equation.
   // In a paragraph that wraps, only its first line (Up) or last line (Down) leaves it.
+  // A question cannot be typed in, but the cursor still stops in it, so Up and Down read every
+  // question line by line and reach the answer box after it. (Chromium would skip a read-only
+  // paragraph.) Down lands at a question's start, Up at its end.
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.altKey && getSelection().isCollapsed && !everythingEditable) {
+    const block = currentBlock();
+    const target = e.key === 'ArrowUp' ? block?.previousElementSibling : block?.nextElementSibling;
+    if (target?.hasAttribute('data-question')) {
+      e.preventDefault();
+      const r = document.createRange();
+      r.selectNodeContents(target);
+      r.collapse(e.key === 'ArrowDown');
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      return;
+    }
+    if (block?.hasAttribute('data-question') && target) {
+      e.preventDefault();
+      placeCaretIn(target);
+      return;
+    }
+  }
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.altKey && getSelection().isCollapsed) {
     const block = currentBlock();
     const target = e.key === 'ArrowUp' ? block?.previousElementSibling : block?.nextElementSibling;
@@ -3547,6 +3795,60 @@ document.addEventListener('keydown', (e) => {
   if (command) { e.preventDefault(); run(command); }
 });
 window.pageKeys = () => Object.keys(DOCUMENT_KEYS); // the menu bar leaves these to the page
+
+// A question cannot be changed by typing, Delete, Backspace, cut or paste that reaches into it
+// (select all then Delete would otherwise remove the questions too). The caret and the arrow keys
+// still move through it, so a question can be read.
+doc.addEventListener('beforeinput', (e) => {
+  if (everythingEditable) return;
+  const sel = getSelection();
+  // (The browser's own target ranges are fixed ranges, which cannot be asked what they touch.)
+  const ranges = [...(e.getTargetRanges?.() || [])].map((s) => {
+    const r = document.createRange();
+    try { r.setStart(s.startContainer, s.startOffset); r.setEnd(s.endContainer, s.endOffset); } catch { return null; }
+    return r;
+  }).filter(Boolean);
+  if (sel.rangeCount) ranges.push(sel.getRangeAt(0));
+  const locked = [...doc.querySelectorAll('[data-question]')];
+  // Backspace or Delete at the edge of a box, where the next key would join the question: the
+  // browser does not always say which range it will delete, so the edge is checked directly.
+  let joinsQuestion = false;
+  if (e.inputType?.startsWith('delete') && sel.isCollapsed && sel.rangeCount) {
+    const caret = sel.getRangeAt(0);
+    let block = caret.startContainer;
+    while (block && block.parentNode !== doc) block = block.parentNode;
+    if (block && block !== doc) {
+      const before = document.createRange(); before.setStart(block, 0); before.setEnd(caret.startContainer, caret.startOffset);
+      const after = document.createRange(); after.selectNodeContents(block); after.setStart(caret.startContainer, caret.startOffset);
+      if (e.inputType.includes('Backward') && before.toString() === '' && block.previousElementSibling?.hasAttribute('data-question')) joinsQuestion = true;
+      if (e.inputType.includes('Forward') && after.toString() === '' && block.nextElementSibling?.hasAttribute('data-question')) joinsQuestion = true;
+    }
+  }
+  if (joinsQuestion || ranges.some((r) => locked.some((node) => r.intersectsNode(node)))) {
+    e.preventDefault();
+    say('That is a question. Write your answer in the answer box after it.');
+  }
+});
+
+// With the cursor inside a question the browser sends no input at all for a key (the question
+// is read-only), so nothing would be said: a key that would write or delete says why not.
+doc.addEventListener('keydown', (e) => {
+  if (everythingEditable || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!(e.key.length === 1 || ['Backspace', 'Delete', 'Enter'].includes(e.key))) return;
+  if (!currentBlock()?.hasAttribute('data-question') || !getSelection().isCollapsed) return;
+  e.preventDefault();
+  say('That is a question. Write your answer in the answer box after it.');
+});
+
+// Developer shortcut: everything becomes editable (questions too); press again to lock them.
+// It is not in the keys list or the menus.
+document.addEventListener('keydown', (e) => {
+  if (shortcutOf(e) !== 'Ctrl+Shift+Alt+U') return;
+  e.preventDefault();
+  everythingEditable = !everythingEditable;
+  lockQuestions();
+  say(everythingEditable ? 'Developer: everything is editable.' : 'Questions are locked again.');
+});
 // Loose text or equations straight in the document go into a paragraph as they appear.
 function tidy() {
   const loose = [...doc.childNodes].some((n) => isInline(n) && (n.nodeType !== Node.TEXT_NODE || n.textContent.trim()));
@@ -3554,7 +3856,7 @@ function tidy() {
 }
 // Enter copies a line's marks onto the new line. A new empty line is a fresh line: it is not
 // hidden from students and has no review note (splitting a line keeps them on both halves).
-const LINE_MARKS = ['data-teacher', 'data-warning', 'data-student-note', 'data-figure', 'data-page'];
+const LINE_MARKS = ['data-teacher', 'data-warning', 'data-student-note', 'data-figure', 'data-page', 'data-picture'];
 function freshLine(block) {
   if (!block || block.textContent.trim() || block.querySelector('.eq')) return;
   for (const name of LINE_MARKS) block.removeAttribute(name);
@@ -3602,13 +3904,24 @@ const COMMANDS = {
     const path = desktop ? await desktop.choosePdf() : prompt('PDF path');
     if (target === documentRevision) importPdf(path);
   },
+  // Import > Any file: one file box for PDF and LaTeX; the file's ending says which import runs.
+  importAny: async () => {
+    if (!desktop) { say('Importing needs the desktop app.'); return; }
+    const target = documentRevision;
+    const file = await desktop.chooseImport();
+    if (!file || target !== documentRevision) return;
+    if (file.kind === 'pdf') importPdf(file.path);
+    else if (file.kind === 'tex') importTex(file);
+    else say(`Could not import ${file.path.split(/[\\/]/).pop()}: Math Notebook can import PDF and LaTeX files.`);
+  },
   save: () => save(false),
   saveAs: () => save(true),
   recover: () => showRecovery(),
-  exportHtml,
-  exportDocx,
-  exportPdf,
-  exportBraille,
+  // File > Save as > Web page, Word document, PDF, Braille: the same save box, that kind first.
+  exportHtml: () => save(true, 'html'),
+  exportDocx: () => save(true, 'docx'),
+  exportPdf: () => save(true, 'pdf'),
+  exportBraille: () => save(true, 'brf'),
   print: () => (desktop ? desktop.print() : window.print()),
   pastePlain,
   find: () => openFind(false),
@@ -3632,7 +3945,7 @@ const COMMANDS = {
   tableDeleteColumn: () => tableCommand('deleteColumn'),
   tableDelete: () => tableCommand('deleteTable'),
   convertMath: openConvert,
-  importTex,
+  importTex: () => importTex(),
   copyGraphLatex,
   graphPlay: () => graphCommand('play'),
   graphNextPoint: () => graphCommand('next'),
@@ -3682,6 +3995,9 @@ const COMMANDS = {
   toPlainText: equationToText,
   toLatexText: equationToLatexText,
   exploreGraph: () => exploreGraph(),
+  graphWords: () => toggleGraphWords(false),
+  graphWordsAll: () => toggleGraphWords(true),
+  graphLineNumbers: toggleLineNumbers,
   nextNote: () => moveToWarning(1),
   previousNote: () => moveToWarning(-1),
   clearNote: clearWarning,
@@ -3700,7 +4016,7 @@ const DOCUMENT_KEYS = {
   'Ctrl+Alt+0': 'normalText', 'Ctrl+Shift+E': 'toEquation', 'Ctrl+E': 'editEquation', 'Alt+=': 'insertEquation', 'Ctrl+F': 'find',
   'Ctrl+H': 'replace', F3: 'findNext', 'Shift+F3': 'findPrevious', 'Ctrl+Shift+M': 'convertMath', 'Ctrl+Shift+W': 'exportDocx',
   F1: 'keys', 'Ctrl+G': 'exploreGraph', 'Ctrl+Shift+G': 'drawGraph', 'Ctrl+F9': 'hideWords', 'Ctrl+Shift+F9': 'hideLine', 'Ctrl+Shift+V': 'pastePlain', F11: 'copyEquationDown', 'Ctrl+T': 'toPlainText', 'Ctrl+Shift+T': 'toPlainText', 'Ctrl+L': 'toLatexText', 'Ctrl+PageDown': 'nextHeading', 'Ctrl+PageUp': 'previousHeading', 'Ctrl+Shift+H': 'headingList',
-  'Ctrl+Shift+D': 'interval', F7: 'spelling', 'Alt+F7': 'nextMisspelling', 'Ctrl+Z': 'undo', 'Ctrl+Y': 'redo', 'Ctrl+Shift+Z': 'redo', F9: 'checkLine',
+  'Ctrl+Shift+D': 'interval', F4: 'graphWords', 'Shift+F4': 'graphWordsAll', F2: 'graphLineNumbers', F7: 'spelling', 'Alt+F7': 'nextMisspelling', 'Ctrl+Z': 'undo', 'Ctrl+Y': 'redo', 'Ctrl+Shift+Z': 'redo', F9: 'checkLine',
 };
 
 // Without the desktop menu bar (tests in a plain browser), the menu's other shortcuts work here too.
@@ -3727,13 +4043,48 @@ window.notebookImport = importPdf; // used by tests
 desktop?.onCommand(run);
 window.serializeNotebook = serialize; // used by tests
 window.isDirty = () => dirty; // asked by the desktop window before it closes
-window.saveForClose = async () => { await save(false); return !dirty; };
+window.saveForClose = async () => { await save(false, 'notebook', { notebookOnly: true }); return !dirty; };
 window.discardForClose = async () => { await clearDraft(); setDirty(false); };
 
 // Start with an empty page ready for typing.
 loadSettings().catch(() => {}); // graph sounds follow the saved settings
 // Enter makes a new paragraph (<p>), not Chromium's default <div>, so every line is a real paragraph.
 document.execCommand('defaultParagraphSeparator', false, 'p');
+
+// Typing at the very start of an equation being stepped through: Chromium would put the letter
+// before the equation, in the sentence (and the equation would close without it). It goes in.
+doc.addEventListener('beforeinput', (e) => {
+  if (!openText || e.inputType !== 'insertText' || !e.data || e.defaultPrevented) return;
+  const sel = getSelection();
+  const { span } = openText;
+  if (!sel.rangeCount || !sel.isCollapsed || !doc.contains(span)) return;
+  // The cursor is at the equation's first letter, or (after Delete there) just before it.
+  const caret = sel.getRangeAt(0);
+  const start = document.createRange();
+  start.selectNodeContents(span);
+  start.collapse(true);
+  const between = document.createRange();
+  if (caret.compareBoundaryPoints(Range.START_TO_START, start) <= 0) {
+    between.setStart(caret.startContainer, caret.startOffset);
+    between.setEnd(start.startContainer, start.startOffset);
+    if (between.toString() !== '' || between.cloneContents().querySelector('.eq, img, br')) return;
+  } else {
+    if (!span.contains(sel.anchorNode)) return;
+    between.setStart(start.startContainer, start.startOffset);
+    between.setEnd(caret.startContainer, caret.startOffset);
+    if (between.toString() !== '') return;
+  }
+  e.preventDefault();
+  span.normalize();
+  if (span.firstChild?.nodeType === Node.TEXT_NODE) span.firstChild.insertData(0, e.data);
+  else span.prepend(document.createTextNode(e.data));
+  const r = document.createRange();
+  r.setStart(span.firstChild, e.data.length);
+  r.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(r);
+  setDirty(true, true);
+});
 
 // The caret never stays inside an equation's MathML (nothing there can be typed): it goes
 // just after the equation.

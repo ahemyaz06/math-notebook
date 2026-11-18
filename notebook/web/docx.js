@@ -3,6 +3,7 @@
 //
 // Blocks: { type: 'heading', level, runs } | { type: 'paragraph', runs } | { type: 'equation', latex } | { type: 'pageBreak' }
 //   | { type: 'list', ordered, items: [{ runs, level }] } | { type: 'table', rows: [[runs]], header }
+// A paragraph may carry picture: { src: a PNG as a data address, width, height }, shown on the line after it.
 // Runs:   { text, bold, italic, underline } | { latex } | { lineBreak: true }
 import { latexToOmml } from './mathml.js';
 
@@ -40,6 +41,35 @@ function runsXml(runs, problems) {
 
 const paragraph = (style, body, extra = '') => `<w:p>${style || extra ? `<w:pPr>${style ? `<w:pStyle w:val="${style}"/>` : ''}${extra}</w:pPr>` : ''}${body}</w:p>`;
 
+// What a screen reader says for a picture; its description is the line above it.
+export const PICTURE_ALT = 'Picture, described in the line above.';
+// The size a picture is shown at: 360 pixels on its longest side, as in the notebook.
+export function pictureSize({ width, height }, side = 360) {
+  const scale = Math.min(1, side / Math.max(width, height));
+  return [Math.round(width * scale), Math.round(height * scale)];
+}
+function pngBytes(src) {
+  const data = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(src || '');
+  return data ? Uint8Array.from(atob(data[1]), (c) => c.charCodeAt(0)) : null;
+}
+
+// A picture in a paragraph of its own (word/media/imageN.png, placed in line with the text).
+function pictureXml(picture, ctx) {
+  const bytes = pngBytes(picture.src);
+  if (!bytes || !(picture.width > 0 && picture.height > 0)) return '';
+  ctx.media.push(bytes);
+  const n = ctx.media.length;
+  const [cx, cy] = pictureSize(picture).map((px) => px * 9525); // English Metric Units in a pixel
+  const names = `id="${n}" name="Picture ${n}" descr="${esc(PICTURE_ALT)}"`;
+  return paragraph(null, '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
+    + `<wp:extent cx="${cx}" cy="${cy}"/><wp:docPr ${names}/>`
+    + '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+    + `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr ${names}/><pic:cNvPicPr/></pic:nvPicPr>`
+    + `<pic:blipFill><a:blip r:embed="rIdPicture${n}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`
+    + `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>`
+    + '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>');
+}
+
 function blockXml(block, ctx) {
   switch (block.type) {
     case 'heading': {
@@ -76,8 +106,11 @@ function blockXml(block, ctx) {
       }).join('');
       return `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/><w:tblLook w:val="04A0" w:firstRow="${block.header ? 1 : 0}" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr>${grid}${rows}</w:tbl>${paragraph(null, '')}`;
     }
-    default:
-      return paragraph(null, runsXml(block.runs, ctx.problems));
+    default: {
+      // A line with its picture: the words, kept on the same page as the picture after them.
+      const picture = block.picture ? pictureXml(block.picture, ctx) : '';
+      return paragraph(null, runsXml(block.runs, ctx.problems), picture ? '<w:keepNext/>' : '') + picture;
+    }
   }
 }
 
@@ -111,7 +144,7 @@ ${lists.map(({ num, ordered, level = 0, start = 1 }) => `<w:num w:numId="${num}"
 }
 
 export function documentParts(blocks, title = 'Document') {
-  const ctx = { problems: [], lists: 0, numbering: [] };
+  const ctx = { problems: [], lists: 0, numbering: [], media: [] };
   const body = blocks.map((b) => blockXml(b, ctx)).join('\n');
   const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${NS}><w:body>
@@ -121,17 +154,18 @@ ${body || paragraph(null, '')}
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   const parts = {
     '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`,
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${ctx.media.length ? '<Default Extension="png" ContentType="image/png"/>' : ''}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`,
     '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`,
     'word/_rels/document.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>`,
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${ctx.media.map((_, i) => `<Relationship Id="rIdPicture${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image${i + 1}.png"/>`).join('')}</Relationships>`,
     'word/document.xml': document,
     'word/styles.xml': STYLES,
     'word/numbering.xml': numberingXml(ctx.numbering),
     'docProps/core.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${esc(title)}</dc:title><dc:language>en-US</dc:language><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`,
   };
+  ctx.media.forEach((bytes, i) => { parts[`word/media/image${i + 1}.png`] = bytes; });
   return { parts, problems: ctx.problems };
 }
 

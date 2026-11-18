@@ -18,7 +18,7 @@ import math
 import re
 import statistics
 
-VERSION = 11  # 11: keep literal TeX special characters in text inside math
+VERSION = 12  # 12: a read graph's curve that runs past its box is not a second, unread drawing
 # 10: a small letter on the line after a word is no subscript ("units of y"); formulas located for reading_check
 # 9: big symbols placed as drawn, fractions in fractions, piecewise rows, formulas broken across lines
 # 8: displayed sums and integrals with limits, tall roots and brackets (found by re-typesetting)
@@ -1073,8 +1073,17 @@ def _drawing_regions(page, boxes):
                 break
         else:
             regions.append(r)
+    # A curve of a graph that was read (a figure box) often runs on past the box, where LaTeX
+    # clips it from view: that is the graph again, not a second drawing. (A page said "a drawing
+    # is here that the notebook could not read" right under the graph it had just read.)
+    def part_of_a_figure(r):
+        for b in boxes:
+            w, h = min(r[2], b[2]) - max(r[0], b[0]), min(r[3], b[3]) - max(r[1], b[1])
+            if w > 0 and h > 0 and w * h >= .25 * min((r[2] - r[0]) * (r[3] - r[1]), (b[2] - b[0]) * (b[3] - b[1])):
+                return True
+        return False
     # A wide flat region is a page rule or a frame's edge, not a drawing.
-    return [r for r in regions if r[2] - r[0] >= 30 and r[3] - r[1] >= 30]
+    return [r for r in regions if r[2] - r[0] >= 30 and r[3] - r[1] >= 30 and not part_of_a_figure(r)]
 
 
 DRAWING_NOTE = 'A drawing is here that the notebook could not read.'
@@ -1113,7 +1122,8 @@ def _drawing_labels(atoms, regions, body):
 
 def read_page(page, figures=()):
     """page: a pdfplumber page. figures: dicts with 'bbox' (x0, top, x1, bottom) and 'marker'
-    (the [FIGURE ...] line to put in its place). Returns markdown, the line of each figure,
+    (the [FIGURE ...] line to put in its place); optionally 'keep' (boxes of page text inside
+    the bbox that stays text) and 'top' (where the figure itself starts, if below the bbox's top). Returns markdown, the line of each figure,
     and notes for lines the reader was unsure of."""
     notes_raw = []
     equations = []  # each formula, its reading and where it is, for reading_check
@@ -1130,7 +1140,9 @@ def read_page(page, figures=()):
         seen.add(key)
         local = []
         a = _glyph(c, local)
-        if any(_inside(b, a.cx, a.cy) for b in boxes):
+        # A figure takes its own text out of the page, but never the page's sentences its box
+        # cuts into (its 'keep' boxes: "Consider the graph of the function f below." lost six words).
+        if any(_inside(f['bbox'], a.cx, a.cy) and not any(_inside(k, a.cx, a.cy) for k in f.get('keep') or ()) for f in figures):
             continue
         for n in local:
             notes_raw.append((a.base, n))
@@ -1162,7 +1174,7 @@ def read_page(page, figures=()):
     for top, lines in tables:
         entries.append((top, 'table', lines))
     for n, f in enumerate(figures):
-        entries.append((f['bbox'][1], 'figure', n))
+        entries.append((f.get('top', f['bbox'][1]), 'figure', n))
     for d in drawings:
         entries.append((d['bbox'][1], 'drawing', d['text']))
     entries.sort(key=lambda e: e[0])

@@ -1,4 +1,4 @@
-MATH NOTEBOOK 0.8.0 BETA (portable)
+MATH NOTEBOOK 0.8.1 BETA (portable)
 
 A document editor for maths that works like Word and reads well with NVDA and MathCAT.
 Nothing to install, and no AI: everything is done by exact rules on this computer.
@@ -43,8 +43,8 @@ Ctrl+PageDown, Ctrl+PageUp  next and previous heading; Ctrl+Shift+H lists the he
 Ctrl+Z, Ctrl+Y              undo, redo (any change, equations included)
 F7, Alt+F7                  check spelling, go to the next misspelled word
 Ctrl+S, Ctrl+P              save, print
-Ctrl+Shift+W                export as a Word document (equations are real Word equations)
-File > Export > PDF         a tagged PDF
+Ctrl+Shift+S                save as: a notebook, PDF, Word document, web page or braille
+Ctrl+Shift+W                save as a Word document (equations are real Word equations)
 
 
 MATHS
@@ -96,13 +96,13 @@ derivatives as curves, smooth curves, open dots), and each item says its own key
 
 
 LATEX FILES AND SHARING
-File > Import LaTeX (.tex) reads a teacher's LaTeX source exactly, including pgfplots graphs,
-which become graphs you explore by sound. To share, export to Word or PDF: anyone can open
-them. An exported PDF carries the notebook inside it, so Math Notebook opens it again exactly.
+Import > LaTeX (.tex) reads a teacher's LaTeX source exactly, including pgfplots graphs,
+which become graphs you explore by sound. To share, save as Word or PDF (File > Save as): anyone can
+open them. A PDF saved this way carries the notebook inside it, so Math Notebook opens it again exactly.
 
 
 PDFs
-File > Import PDF (Ctrl+Shift+I). Course PDFs made with LaTeX are rebuilt from their own
+Import > PDF (Ctrl+Shift+I). Course PDFs made with LaTeX are rebuilt from their own
 characters: every equation as real maths, and graphs drawn by LaTeX can be explored by sound.
 Without AI, two things cannot be read: pictures (their place is marked), and pages that are
 scans or whose maths is drawn as shapes (the page says so). The full Math Notebook with its
@@ -112,12 +112,12 @@ AI add-on can read those.
 TEACHER MODE
 Tools > Teacher > Teacher mode lets a TA or tutor hide lines, words, answers and parts of graphs
 (even the formula: students hear the curve and find it), preview the student copy, and save
-or export it. Hidden parts are taken out of the student's files, not just hidden.
+it as a notebook, Word or PDF. Hidden parts are taken out of the student's files, not just hidden.
 
 
 OPTIONAL TOOLS
 Install Tectonic separately to compare PDF equations against the page (it downloads TeX
-packages the first time it runs). Install BrailleBlaster separately for File > Export >
+packages the first time it runs). Install BrailleBlaster separately for File > Save as >
 Braille (BRF). The user guide explains both.
 
 

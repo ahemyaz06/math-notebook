@@ -138,6 +138,13 @@ def load_page(doc_id, number, *, retry_check=False):
 
 def still_valid(page, *, retry_check=False):
     method = app_settings.get('reading_method')
+    # A graph read from the PDF's drawing by an older graph reader is read again (version 2
+    # keeps the letters that name points on a curve).
+    import vector_graph
+    for figure in page.get('figures') or []:
+        numbers = figure.get('numbers') or {}
+        if numbers.get('status') == 'exact' and (numbers.get('graph') or {}).get('reader_version') != vector_graph.VERSION:
+            return False
     if page.get('method') == 'text':
         if page.get('needs_ai'):
             return method == 'text'  # "only the AI can read it": read it once the AI is allowed
@@ -180,9 +187,10 @@ def page_check(page):
 
 # ---------- one page ----------
 
-def native_text(pdf, index, skip_boxes=()):
+def native_text(pdf, index, skip_boxes=(), keep_boxes=()):
     """The PDF's own text for a page, leaving out text inside the given boxes
-    (x0, top, x1, bottom in points from the top-left), such as graph tick labels."""
+    (x0, top, x1, bottom in points from the top-left), such as graph tick labels. Text in
+    keep_boxes (the page's sentences, which a graph's box may cut into) is never left out."""
     page = pdf[index]
     textpage = page.get_textpage()
     try:
@@ -193,7 +201,8 @@ def native_text(pdf, index, skip_boxes=()):
         for i in range(textpage.count_chars()):
             left, bottom, right, top = textpage.get_charbox(i)
             cx, cy = (left + right) / 2, height - (bottom + top) / 2
-            if right > left and any(b[0] <= cx <= b[2] and b[1] <= cy <= b[3] for b in skip_boxes):
+            if (right > left and any(b[0] <= cx <= b[2] and b[1] <= cy <= b[3] for b in skip_boxes)
+                    and not any(b[0] <= cx <= b[2] and b[1] <= cy <= b[3] for b in keep_boxes)):
                 continue
             kept.append(textpage.get_text_range(i, 1))
         return ''.join(kept)
@@ -220,6 +229,7 @@ def find_figures(source, index, folder):
         height = page['size_points'][1] or 1
         plumber = inspector.text_pdf.pages[index]
         pictures = embedded_picture_boxes(inspector.pdf, index)
+        prose = None
         boxes = []
         for cand in page['candidates']:
             if cand.get('extraction') == 'page_fallback':
@@ -243,7 +253,9 @@ def find_figures(source, index, folder):
         for n, (bbox, exact) in enumerate(sorted(boxes, key=lambda b: b[0][1]), 1):
             picture = folder / f'figure-{index + 1}-{n}.png'
             picture.write_bytes(inspector.png(index, bbox))
-            found.append({'bbox': bbox, 'picture': picture,
+            if exact and prose is None:
+                prose = vector_graph.prose_boxes(plumber)  # the page's sentences stay page text
+            found.append({'bbox': bbox, 'picture': picture, **({'prose': prose} if exact else {}),
                           'position': (bbox[1] + bbox[3]) / 2 / height, 'exact': exact,
                           'embedded': any(_contains(bbox, p) for p in placed)})
     return found
@@ -593,7 +605,11 @@ def read_by_text(source, number, found, pdf_text, math_fonts, page=None):
             elif describe and (trimmed := _drawing_box(page, f['bbox'])):
                 f['bbox'] = trimmed
                 keep.append(f)
-        marks = [{'bbox': f['bbox'], 'marker': '[FIGURE type=coordinate_graph]' if f['exact'] else '[FIGURE type=other]'}
+        # A graph read exactly takes only its own text out of the page (never a sentence its
+        # padded box cuts into) and stands where its frame starts, after the line above it
+        # (text_box is the frame and its numbers with a 14-point margin).
+        marks = [{'bbox': f['bbox'], 'marker': '[FIGURE type=coordinate_graph]' if f['exact'] else '[FIGURE type=other]',
+                  **({'keep': f.get('prose') or [], 'top': f['exact']['text_box'][1] + 14} if f['exact'] else {})}
                  for f in keep]
         result = pdf_text_reader.read_page(page, marks)
         has_equations = bool(result['equations'])
@@ -671,7 +687,8 @@ def process_page(doc_id, number, on_stage=None, model=None, save=True, method=No
         pdf = pdfium.PdfDocument(str(folder / 'source.pdf'))
         try:
             # Tick labels inside exactly-read graphs are checked by the graph reader instead.
-            pdf_text = native_text(pdf, index, [f['exact']['text_box'] for f in found if f['exact']])
+            pdf_text = native_text(pdf, index, [f['exact']['text_box'] for f in found if f['exact']],
+                                   [b for f in found if f['exact'] for b in f.get('prose') or []][:400])
         finally:
             pdf.close()
     # The page's characters and shapes are parsed once here and shared by the steps below

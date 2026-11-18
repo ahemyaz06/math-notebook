@@ -13,8 +13,8 @@ const SYMBOLS = { inf: '\\infty', infinity: '\\infty', pm: '\\pm', '+-': '\\pm',
 // Integrals and sums: int_0^1 x^2 dx, sum_(n=1)^inf 1/n^2. "integral" is the word for int.
 const LARGE = { int: '\\int', integral: '\\int', iint: '\\iint', iiint: '\\iiint', oint: '\\oint', sum: '\\sum', prod: '\\prod' };
 // Maths characters pasted from elsewhere (∫ x² dx copied from a page) read as their typed words.
-const PASTED = { '∫': 'int', '∬': 'iint', '∭': 'iiint', '∮': 'oint', '∑': 'sum', '∏': 'prod', 'π': 'pi', '∞': 'inf',
-  '≤': '<=', '≥': '>=', '≠': '!=', '·': '*', '×': '*', '−': '-', '÷': '/', '²': '^2', '³': '^3',
+const PASTED = { '∫': 'int', '∬': 'iint', '∭': 'iiint', '∮': 'oint', '∑': 'sum', '∏': 'prod', 'π': 'pi', '∞': 'inf', '√': 'sqrt', '∛': 'cbrt',
+  '≤': '<=', '≥': '>=', '→': '->', '≠': '!=', '·': '*', '×': '*', '−': '-', '÷': '/', '²': '^2', '³': '^3',
   // Greek letters typed as themselves (θ from a symbols list or Access8Math) read as their names.
   'α': 'alpha', 'β': 'beta', 'γ': 'gamma', 'δ': 'delta', 'Δ': 'Delta', 'ε': 'epsilon', 'θ': 'theta', 'Θ': 'Theta',
   'λ': 'lambda', 'μ': 'mu', 'Π': 'Pi', 'ρ': 'rho', 'σ': 'sigma', 'Σ': 'Sigma', 'τ': 'tau', 'φ': 'phi', 'ω': 'omega', 'Ω': 'Omega' };
@@ -23,8 +23,11 @@ const PASTED_CHARS = new RegExp(`[${Object.keys(PASTED).filter((k) => k.length =
 function tokenize(text) {
   const tokens = [];
   const source = text.replace(PASTED_CHARS, (ch) => ` ${PASTED[ch]} `).replace(/ (\^[23]) /g, '$1');
+  // 1.5.2 is not a number (it used to be read as 1.5 times .2).
+  const twice = /\d*\.\d+\.\d+/.exec(source);
+  if (twice) throw new Error(`${twice[0]} has two decimal points.`);
   // ______ is a blank to fill in (\underline{\qquad}), not subscripts.
-  const re = /\s*(_{3,}|\d+(?:\.\d+)?|\.\d+|<=|>=|!=|->|~=|\+-|[A-Za-z]+|[-+*/^_=<>(),[\]{}|'!:;]|\S)/gy;
+  const re = /\s*(_{3,}|\.{3}|\d+(?:\.\d+)?|\.\d+|<=|>=|!=|->|~=|\+-|[A-Za-z]+|[-+*/^_=<>(),[\]{}|'!:;]|\S)/gy;
   let m;
   while ((m = re.exec(source))) tokens.push(m[1]);
   return tokens;
@@ -137,6 +140,8 @@ class Parser {
   primary() {
     const t = this.next();
     if (t === undefined) throw new Error('The equation ends too early.');
+    if (t === '...') return { type: 'sym', latex: '\\ldots' };
+    if (t === '.') throw new Error('A full stop is not part of a number here. Write 2.5 or 0.5, with digits after the point.');
     if (/^(\d|\.)/.test(t)) return { type: 'num', value: t };
     if (/^_{3,}$/.test(t)) return { type: 'sym', latex: '\\underline{\\qquad}' };
     if (t === '(') return this.group('(', ')');
@@ -164,6 +169,15 @@ class Parser {
     if (t === 'lim') {
       let under = null;
       if (this.eat('_')) under = this.primary();
+      // lim x -> inf 1/x^2 and lim_x -> 2 f(x): the letter and where it goes, written without
+      // brackets. (Without this, lim took only the x, and "-> inf 1/x^2" became an arrow
+      // pointing at infinity times 1/x^2.)
+      const bare = under === null && /^[A-Za-z]$/.test(this.peek() ?? '') && this.peek(1) === '->';
+      if (bare || (under?.type === 'var' && this.peek() === '->')) {
+        const letter = bare ? this.primary() : under;
+        this.next();
+        under = { type: 'rel', op: '->', left: letter, right: this.limitTarget() };
+      }
       return { type: 'lim', under, arg: this.term() };
     }
     if (LARGE[t]) {
@@ -171,8 +185,8 @@ class Parser {
       // runs to its dx (or to an = or a comma); a sum's body is one term, as in print.
       let sub = null, sup = null;
       for (let k = 0; k < 2; k += 1) {
-        if (!sub && this.eat('_')) sub = this.primary();
-        else if (!sup && this.eat('^')) sup = this.primary();
+        if (!sub && this.eat('_')) sub = this.signed();
+        else if (!sup && this.eat('^')) sup = this.signed();
       }
       const integral = LARGE[t] !== '\\sum' && LARGE[t] !== '\\prod';
       const starts = this.startsFactor(this.peek()) || this.peek() === '-' || LARGE[this.peek()];
@@ -204,6 +218,30 @@ class Parser {
     if (/^[A-Za-z]$/.test(t)) return { type: 'var', name: t };
     throw new Error(`Unexpected "${t}".`);
   }
+  // Where x goes in a limit written without brackets: inf, -inf, 2, 0^+, pi/2, 2pi, -pi/2.
+  // What follows it is the function. Nothing the function starts with can be / or *, so those
+  // still belong to the target (lim x -> pi/2 tan x); a number and pi together are one (2pi).
+  limitTarget() {
+    const sign = this.eat('-') ? -1 : (this.eat('+'), 1);
+    let target = this.primary();
+    if (target.type === 'num' && (this.peek() === 'pi' || this.peek() === 'e') && this.peek(1) !== '^') target = { type: 'mul', explicit: false, left: target, right: this.primary() };
+    // 0^+ and 0^-: the side x comes from (never a power here, whatever follows: 0^+ 1/x).
+    if (this.peek() === '^' && ['+', '-'].includes(this.peek(1))) {
+      this.next();
+      target = { type: 'pow', base: target, exp: { type: 'sym', latex: this.next() } };
+    }
+    while (this.peek() === '/' || this.peek() === '*') {
+      const op = this.next(), right = this.primary();
+      target = op === '/' ? { type: 'frac', num: target, den: right } : { type: 'mul', explicit: true, left: target, right };
+    }
+    return sign < 0 ? { type: 'neg', arg: target } : target;
+  }
+  // A limit of an integral or a sum may carry its sign without brackets: int_-1^1.
+  signed() {
+    if (this.eat('-')) return { type: 'neg', arg: this.primary() };
+    this.eat('+');
+    return this.primary();
+  }
   groupInner(close) {
     const inner = this.relationList();
     this.expect(close);
@@ -211,7 +249,12 @@ class Parser {
   }
 }
 
-const strip = (n) => (n.type === 'paren' && n.open === '(' ? n.inner : n);
+// Brackets that only group: (x + 1)/2, and braces typed as in LaTeX, x^{2} or lim_{x->0}.
+const strip = (n) => (n.type === 'paren' && (n.open === '(' && n.close === ')' || n.open === '{') ? n.inner : n);
+// The piece ends in a function written without brackets (sin x, 2 ln x): whatever is printed
+// straight after it would be read as part of what the function is taken of.
+const endsOpen = (n) => (n.type === 'fn' ? n.arg.type !== 'paren' : n.type === 'mul' ? endsOpen(n.right) : n.type === 'neg' ? endsOpen(n.arg) : false);
+const startsNamed = (n) => { while (n.type === 'mul' || n.type === 'pow') n = n.type === 'mul' ? n.left : n.base; return n.type === 'fn' || n.type === 'large' || n.type === 'lim'; };
 const isSimple = (n) => ['num', 'var', 'sym'].includes(n.type);
 
 function toLatex(n) {
@@ -228,6 +271,10 @@ function toLatex(n) {
       if (n.left.type === 'sym' && n.left.latex === '\\pm') return `\\pm ${right}`;
       // 3*x is written 3x, as in print; a number after anything needs a dot (2 \cdot 3, x \cdot 2).
       if (n.right.type === 'num' || (/\d$/.test(left) && /^\d/.test(right))) return `${left} \\cdot ${right}`;
+      // 3 * -2 keeps its dot: 3-2 would be a subtraction.
+      if (/^[-+]/.test(right)) return `${left} \\cdot ${right}`;
+      // sin x * x keeps its dot: sin xx would be the sine of x times x.
+      if (n.explicit && endsOpen(n.left) && !startsNamed(n.right)) return `${left} \\cdot ${right}`;
       // x^2 dx: the thin space printed before a differential.
       if (n.right.type === 'sym' && SYMBOLS[n.right.latex] === n.right.latex && /^d/.test(right)) return `${left}\\,${right}`;
       // \pi x needs a space so it is not read as the command \pix.
@@ -249,7 +296,7 @@ function toLatex(n) {
       return /\\frac|\\sqrt/.test(inner) ? `\\left| ${inner} \\right|` : `|${inner}|`;
     }
     case 'sqrt': return n.index ? `\\sqrt[${toLatex(typeof n.index === 'string' ? { type: 'num', value: n.index } : n.index)}]{${toLatex(strip(n.arg))}}` : `\\sqrt{${toLatex(strip(n.arg))}}`;
-    case 'lim': return `\\lim_{${n.under ? toLatex(strip(n.under)) : ''}} ${toLatex(n.arg)}`;
+    case 'lim': return `\\lim${n.under ? `_{${toLatex(strip(n.under))}}` : ''} ${toLatex(n.arg)}`;
     case 'large': {
       const limits = `${n.sub ? `_{${toLatex(strip(n.sub))}}` : ''}${n.sup ? `^{${toLatex(strip(n.sup))}}` : ''}`;
       return `${n.latex}${limits}${n.body ? ` ${toLatex(n.body)}` : ''}`;
@@ -264,8 +311,10 @@ function toLatex(n) {
 }
 
 export function plainToLatex(text) {
-  const source = text.trim();
+  const source = withoutFullStop(text.trim());
   if (!source) return '';
+  // A line that starts with = carries on from the line above: = (x - 2)(x + 2).
+  if (/^=(?!=)/.test(source)) { const rest = plainToLatex(source.slice(1)); return rest ? `= ${rest}` : '='; }
   const domain = splitDomain(source);
   if (domain) return `${plainToLatex(domain.main)}, \\quad ${domainLatex(domain)}`;
   // An interval on its own: x in [0, 2pi).
@@ -275,6 +324,11 @@ export function plainToLatex(text) {
   const set = /(?:\bx\s*(?:in|on)|\bon)\s*\{([^{}]*,[^{}]*)\}\s*$/i.exec(source);
   if (set) throw new Error(`Curly braces make a set: {${set[1].trim()}} is only those numbers. For an interval write [${set[1].trim()}] (ends included) or (${set[1].trim()}) (ends left out).`);
   return toLatex(new Parser(source).parse()).replace(/\s+/g, ' ').trim();
+}
+
+// The full stop that ends a sentence (x = 2.) is not maths; the three dots (1, 2, ...) are.
+function withoutFullStop(text) {
+  return /[^.\s]\s*\.$/.test(text) ? text.replace(/\s*\.$/, '') : text;
 }
 
 // ---------- comments: words next to the maths that never become maths ----------
@@ -336,9 +390,10 @@ function intervalWords({ open, close, lo, hi }) {
 // Returns { main, condition (comparisons of x, or 'otherwise'), kind, interval }.
 export function splitDomain(text) {
   const source = text.replace(/∈/g, ' in ').trim();
-  // {0 < x < 1} after the function.
+  // {0 < x < 1} after the function. A condition compares; braces around maths, sqrt{x+1} or
+  // e^{2x} typed as in LaTeX, are not one.
   const braces = /^(.*\S)\s*,?\s*\{([^{}]*)\}$/.exec(source);
-  if (braces && /=/.test(braces[1]) && /\bx\b/.test(braces[2])) {
+  if (braces && /=/.test(braces[1]) && /\bx\b/.test(braces[2]) && /[<>≤≥≠]|!=|\bin\b/.test(braces[2])) {
     const inner = braces[2].trim();
     const main = braces[1].trim().replace(/,$/, '');
     const interval = intervalCondition(inner) && trailingInterval(inner);
@@ -376,14 +431,15 @@ function domainLatex(domain) {
 
 // The parsed form of plain-text maths (used by the graphs, which evaluate it).
 export function parsePlain(text) {
-  return new Parser(text.trim()).parse();
+  return new Parser(withoutFullStop(text.trim())).parse();
 }
 
 // ---------- LaTeX -> plain text ----------
 
 const LATEX_WORDS = {
   cdot: '*', times: '*', div: '/', pm: '+-', mp: '-+', le: '<=', leq: '<=', ge: '>=', geq: '>=', ne: '!=', neq: '!=',
-  to: '->', rightarrow: '->', infty: 'inf', approx: '~=', circ: 'o', ldots: '...', cdots: '...', quad: ' ', qquad: ' ',
+  to: '->', rightarrow: '->', longrightarrow: '->', infty: 'inf', approx: '~=', circ: 'o', ldots: '...', cdots: '...', dots: '...', quad: ' ', qquad: ' ',
+  lt: '<', gt: '>', ast: '*', prime: "'", lbrace: '{', rbrace: '}', lbrack: '[', rbrack: ']', mid: '|',
   ',': ' ', ';': ' ', ':': ' ', '!': '', ' ': ' ', '{': '{', '}': '}', '%': '%', '|': '|', lvert: '|', rvert: '|', vert: '|',
 };
 
@@ -445,23 +501,61 @@ function wrap(text) {
   return `(${s})`;
 }
 
+// A function name (with its power or base) is the last thing written: sin, ln, cos^2, log_2.
+const AFTER_FUNCTION = new RegExp(`(?:^|[^A-Za-z])(?:${FUNCTIONS.filter((f) => !['lim', 'max', 'min'].includes(f)).join('|')})(?:[\\^_](?:\\([^()]*\\)|[^\\s(]+))*\\s*$`);
+const AFTER_SLOPE_SIGN = /(?:^|[^A-Za-z])d\/d[A-Za-z]\s*$/;
+// A division outside every bracket.
+function hasDivision(text) {
+  let s = text.trim(), before;
+  do { before = s; s = s.replace(/\([^()]*\)|\[[^[\]]*\]|\|[^|]*\|/g, 'u'); } while (s !== before);
+  return s.includes('/');
+}
+
 export function latexToPlain(latex) {
   let out = '';
   let i = 0;
+  // Sizes and styles change nothing in the maths. (Whole words only: \rightarrow is not \right.)
   // \limits only moves an integral's limits; the plain text has one way to write them.
-  const src = latex.replace(/\\left|\\right|\\big|\\Big|\\bigg|\\Bigg|\\displaystyle|\\(?:no)?limits(?![A-Za-z])/g, '');
+  const src = latex
+    .replace(/\\(?:left|right)\s*\.(?!\d)/g, '')
+    .replace(/\\(?:left|right|[bB]igg?[lrm]?|displaystyle|textstyle|scriptstyle|scriptscriptstyle|(?:no)?limits)(?![A-Za-z])/g, '')
+    // f^{\prime} is f'.
+    .replace(/\^\s*\{\s*((?:\\prime\s*)+)\}/g, (m, marks) => "'".repeat(marks.match(/\\prime/g).length))
+    .replace(/\^\s*\\prime(?![A-Za-z])/g, "'")
+    // 1\,000 is one number; ~ is a space.
+    .replace(/(\d)\\,(?=\d{3}(?!\d))/g, '$1')
+    .replace(/(?<!\\)~/g, ' ');
+  // Two numbers from different pieces must not run together: x^{2}3 is not x^23.
+  const apart = () => { if (/\d$/.test(out) && /^\s*\{?\s*\d/.test(src.slice(i))) out += ' '; };
   while (i < src.length) {
     const ch = src[i];
     if (ch === '\\') {
       const m = /^\\([A-Za-z]+|.)/.exec(src.slice(i));
       const name = m[1];
       i += m[0].length;
-      if (['frac', 'dfrac', 'tfrac', 'nicefrac'].includes(name)) {
+      if (['frac', 'dfrac', 'tfrac', 'cfrac', 'nicefrac'].includes(name)) {
         const [num, a] = readArg(src, i);
         const [den, b] = readArg(src, a);
-        const fraction = `${wrap(latexToPlain(num))}/${wrap(latexToPlain(den))}`;
-        const besideDivision = /\/\s*$/.test(out) || /^\s*(?:\/|\\div(?![A-Za-z]))/.test(src.slice(b));
-        out += besideDivision ? `(${fraction})` : fraction;
+        const top = latexToPlain(num), bottom = latexToPlain(den);
+        const fraction = `${wrap(top)}/${wrap(bottom)}`;
+        // A whole number straight before a fraction of numbers is a mixed number: 2 1/2 is 2 + 1/2.
+        const whole = /^\d+$/.test(top) && /^\d+$/.test(bottom) ? /(?:^|[^\d.A-Za-z)^_])(\d+)$/.exec(out) : null;
+        // Brackets where the fraction would otherwise be split when read back: beside another
+        // division, under a power (\frac{x}{2}^{2}), after sin or ln (\sin\frac{x}{2}), after d/dx.
+        const beside = /\/\s*$/.test(out) || /^\s*(?:\/|\^|!|'|\\div(?![A-Za-z]))/.test(src.slice(b))
+          || AFTER_FUNCTION.test(out) || AFTER_SLOPE_SIGN.test(out);
+        if (whole) out = `${out.slice(0, out.length - whole[1].length)}(${whole[1]} + ${fraction})`;
+        else {
+          if (/\d$/.test(out) && /^\d/.test(fraction)) out += ' '; // 2\frac{1}{x} is not 21/x
+          out += beside ? `(${fraction})` : fraction;
+          if (top === 'd' && /^d[A-Za-z]$/.test(bottom)) out += ' '; // d/dx x^2, not d/dxx^2
+        }
+        i = b;
+        apart();
+      } else if (name === 'binom') {
+        const [top, a] = readArg(src, i);
+        const [bottom, b] = readArg(src, a);
+        out += `binom(${latexToPlain(top)}, ${latexToPlain(bottom)})`;
         i = b;
       } else if (name === 'sqrt') {
         let index = null;
@@ -515,15 +609,23 @@ export function latexToPlain(latex) {
       const inner = latexToPlain(arg);
       out += ch + (/[\^_]/.test(inner) && !/^\(.*\)$/.test(inner) ? `(${inner})` : wrap(inner));
       i = a;
+      apart();
     } else if (ch === '{') {
       const [group, end] = readGroup(src, i);
       const value = latexToPlain(group);
-      out += /^\s*[_^]/.test(src.slice(end)) ? wrap(value) : value;
+      // \ln{\frac{x}{2}}: the logarithm of the whole fraction, as it is drawn. (\sin{x+1} is drawn
+      // sin x + 1, and is read that way.)
+      out += /^\s*[_^]/.test(src.slice(end)) || (AFTER_FUNCTION.test(out) && hasDivision(value)) ? wrap(value) : value;
       i = end;
+      apart();
     } else if (ch === '}') {
       i += 1;
     } else if (ch === '&') {
       out += ' ';
+      i += 1;
+    } else if (ch === '+' && /^\s*-/.test(src.slice(i + 1))) {
+      // 3+-2 is 3 plus minus 2. (Plain text keeps +- for plus-or-minus, which LaTeX writes \pm.)
+      out += '+ ';
       i += 1;
     } else {
       out += ch;
@@ -531,6 +633,44 @@ export function latexToPlain(latex) {
     }
   }
   return out.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
+}
+
+// LaTeX commands this reader has no meaning for (\hat, \vec, \varepsilon ...). Their names
+// come out as words, which is right for reading aloud, but they must never be worked out as
+// numbers: "hat x" would be h times a times t times x.
+const READ_COMMANDS = new Set([...FUNCTIONS, ...GREEK, ...Object.keys(LATEX_WORDS), ...Object.keys(LARGE),
+  'frac', 'dfrac', 'tfrac', 'cfrac', 'nicefrac', 'sqrt', 'text', 'mbox', 'hbox', 'textrm', 'textnormal', 'textit',
+  'mathrm', 'operatorname', 'mathbf', 'mathit', 'textbf', 'textcolor', 'colorbox', 'color', 'hspace', 'vspace',
+  'phantom', 'hphantom', 'vphantom', 'underline', 'boxed', 'fbox', 'overbrace', 'underbrace', 'begin', 'end',
+  'left', 'right', 'displaystyle', 'textstyle', 'scriptstyle', 'scriptscriptstyle', 'limits', 'nolimits', 'in',
+  ...['big', 'Big', 'bigg', 'Bigg'].flatMap((b) => [b, `${b}l`, `${b}r`, `${b}m`])]);
+export function unreadCommands(latex) {
+  const found = String(latex).match(/\\[A-Za-z]+/g) || [];
+  return [...new Set(found.map((c) => c.slice(1)).filter((c) => !READ_COMMANDS.has(c)))];
+}
+
+// LaTeX with plain text in it: \frac{1}{2}x^2 + sqrt(x), x^{2} <= 4, \frac{x}{2} pi. Shown as
+// it is, the plain pieces would be drawn as loose letters (s q r t), so the whole line is read
+// to plain text and written again as LaTeX. Returns null when the text is LaTeX through and
+// through, or holds something plain text cannot write (a function in pieces, words, \hat).
+const PLAIN_WORDS = [...FUNCTIONS, ...GREEK, ...Object.keys(LARGE), 'sqrt', 'abs', 'cbrt', 'root', 'inf', 'infinity', 'pm']
+  .sort((a, b) => b.length - a.length);
+export function hasPlainPieces(text) {
+  // (A word as a subscript, x_{min}, is a name, not a plain-text function.)
+  const bare = String(text).replace(/\\[A-Za-z]+|\\./g, ' ').replace(/_\s*\{[A-Za-z]+\}/g, ' ');
+  if (/<=|>=|!=|->|~=|\+-|\*|[²³π∞≤≥≠→√∛]/u.test(bare)) return true;
+  // \lim x \to \infty f(x) or \lim_x \to 2: the limit written without its subscript in braces.
+  if (/\\lim(?![A-Za-z])(?!\s*(?:\\limits\s*)?_\s*\{)/.test(String(text))) return true;
+  return (bare.match(/[A-Za-z]{2,}/g) || []).some((run) => PLAIN_WORDS.some((word) => run.includes(word)));
+}
+export function mixedToLatex(text) {
+  const source = String(text).trim();
+  if (!hasPlainPieces(source)) return null;
+  if (/\\(?:begin|end|text|mbox|hbox|textrm|textnormal|textit|textbf)(?![A-Za-z])/.test(source) || unreadCommands(source).length) return null;
+  try {
+    const plain = latexToPlain(source);
+    return plain ? plainToLatex(plain) : null;
+  } catch { return null; }
 }
 
 // Words a screen reader can say for a short equation label, e.g. in a graph list.

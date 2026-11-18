@@ -11,7 +11,7 @@ NVDA and MathCAT. You can:
 
 Everything runs on your own computer, without AI unless you add it. It is a beta made by one
 student, built first for one calculus course, so read [What has been tested](#what-has-been-tested)
-before relying on it. The [changelog](notebook/CHANGELOG.md) lists what is new in 0.8.0.
+before relying on it. The [changelog](notebook/CHANGELOG.md) lists what is new in 0.8.1.
 
 ## Download
 
@@ -82,7 +82,7 @@ is Help > Settings > Reading PDFs > Check each equation.
 
 ### Braille
 
-File > Export > Braille (BRF) makes a braille ready file with
+File > Save as > Braille (BRF) makes a braille ready file with
 [BrailleBlaster](https://www.brailleblaster.org/) (free, from the American Printing House). Every
 equation goes to it as MathML. For Nemeth maths, choose UEB with Nemeth in BrailleBlaster's
 Translation settings. The approach follows Owen Petronick's Braille Check.

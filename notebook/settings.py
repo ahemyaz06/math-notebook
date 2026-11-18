@@ -92,6 +92,10 @@ def _spec():
         'dot_sounds': ('new', ['new', 'original']),
         # Numbers said in graph mode: to the nearest half (4.19 is 4), one decimal, or exact
         'graph_numbers': ('half', ['half', 'tenth', 'exact']),
+        # Numbers in the description of a graph read from a PDF, in the document (F2 changes it):
+        # 'rounded' (the nearest half when the number is within 0.06 of it, else one decimal:
+        # 1.01 is 1, 2.71 is 2.7) or 'exact' (as measured from the drawing, two decimals)
+        'graph_line_numbers': ('rounded', ['rounded', 'exact']),
     }
 
 

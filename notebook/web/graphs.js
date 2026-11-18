@@ -1,25 +1,37 @@
 // Graphs from maths in the document: LaTeX or plain text, including piecewise functions
-// (\begin{cases}), become functions that Sound Lab's engine can trace and describe.
+// (\begin{cases}), become functions that Sound Lab's engine can trace and describe. Their values
+// and limits are worked out by maths.js on the parsed tree, the same as F9's.
 // Rules, not AI: the maths is parsed and evaluated, never guessed.
-import { intervalCondition, latexToPlain, parsePlain, plainToLatex, splitDomain } from './equation.js';
-import { compileEquation, compileExpression, detectLandmarks, formatNumber } from '/sound/graph-math.js';
+import { intervalCondition, latexToPlain, parsePlain, plainToLatex, splitDomain, unreadCommands } from './equation.js';
+import { detectLandmarks, formatNumber } from '/sound/graph-math.js';
+import { Unsupported, graphOf, limitHooks, sideLimit, value as valueOf } from './maths.js';
+import { differentiate, reduced } from './derive.js';
 
-// How numbers are said while exploring a graph (Help > Settings > Graph sound): 'half' rounds to the
-// nearest half (4.1931 is 4, 0.894 is 1, 0.00004 is 0), 'tenth' to one decimal, 'exact' keeps
-// six digits. What is written into the document (makeGraph, studentGraph) has at most two
-// decimals (1.41421 is 1.41), whatever the setting.
+// How numbers are said while exploring a graph. A function that is known exactly (it has a
+// formula, or was drawn here) is said to two decimals, whatever the setting: y = x^2 at 0.5 is
+// 0.25, never "0.5", and a limit of 0.69 is never "0.5". The setting (Help > Settings > Graph
+// sound > Numbers you hear) is for curves read from a page, whose points are measured: 'half' is
+// the nearest half when the number is within 0.06 of it, else one decimal (1.97 is 2, 2.71 is
+// 2.7), 'tenth' is one decimal, 'exact' keeps six digits for everything. What is written into
+// the document (makeGraph, studentGraph) has at most two decimals (1.41421 is 1.41).
 let numberStyle = 'exact';
+let sourceExact = false;
 export function setNumberStyle(style) {
   if (['half', 'tenth', 'exact'].includes(style)) numberStyle = style;
 }
+// Is the function being read known exactly (a formula, a drawing), or measured from a page?
+export function setSourceExact(known) { sourceExact = Boolean(known); }
 export function roundForSpeech(n) {
   if (!Number.isFinite(n)) return n;
-  // Halves round away from zero on both sides: 3.75 is 4 and -3.75 is -4 (Math.round alone
-  // would make -3.75 into -3.5).
+  // Rounding goes away from zero on both sides: 3.75 is 3.8 and -3.75 is -3.8.
   const to = (k) => Math.sign(n) * Math.round(Math.abs(n) * k) / k;
   // Written: two decimals, but a small number that is not 0 keeps two digits (0.004 is not 0).
   const written = () => (Math.abs(n) < .005 ? Number(n.toPrecision(2)) : to(100));
-  return numberStyle === 'half' ? to(2) : numberStyle === 'tenth' ? to(10) : numberStyle === 'written' ? written() : n;
+  const nearHalf = () => (Math.abs(n - to(2)) <= 0.06 + 1e-9 ? to(2) : to(10));
+  if (numberStyle === 'written') return written();
+  if (numberStyle === 'exact') return n;
+  if (sourceExact) return written();
+  return numberStyle === 'half' ? nearHalf() : to(10);
 }
 export const say = (n) => formatNumber(roundForSpeech(n)).replace(/e\+?(?=-?\d+$)/, ' times 10 to the ').replaceAll('-', 'minus ');
 // Two decimals while work runs: what is written, and the points a description names.
@@ -105,7 +117,9 @@ function functionSide(ast) {
 }
 
 function constantValue(ast) {
-  const value = compileExpression(graphText(ast)).evaluate({});
+  graphText(ast); // only numbers and functions: no other letters
+  let value;
+  try { value = valueOf(ast, { vars: {}, defs: {}, pm: 1 }); } catch (error) { if (!(error instanceof Unsupported)) throw error; value = NaN; }
   if (!Number.isFinite(value)) throw new Error('A condition needs a number on one side of x.');
   return value;
 }
@@ -175,7 +189,12 @@ const isInequality = (n) => n.type === 'rel' && n.op !== '=' && (n.left.type !==
 
 // One function of x from plain text or LaTeX. Returns Sound Lab's graph object plus the
 // dots that a piecewise function's ends make, and a label to speak.
-export function compileFunction(source, format = /\\[A-Za-z]|[_^]\{/.test(source) ? 'latex' : 'plain') {
+export function compileFunction(source, format = /\\|[_^]\{/.test(source) ? 'latex' : 'plain') {
+  // A line that carries on from the one above (= (x - 2)(x + 2)) is graphed as y = that.
+  if (/^\s*=(?!=)/.test(String(source))) source = String(source).replace(/^\s*=\s*/, '');
+  // \hat{x}, \vec{v}: names the graphs have no value for (never h times a times t times x).
+  const unread = format === 'latex' ? unreadCommands(source) : [];
+  if (unread.length) throw new Error(`\\${unread[0]} cannot be graphed.`);
   // 1e-9 could be 1 times 10 to the -9 or 1 times e, minus 9: a wrong guess describes the wrong
   // function with confidence, so the writer says which.
   const sci = /(^|[^A-Za-z\d.])(\d*\.?\d+)[eE]([+-]?\d+)(?![\d.])/.exec(String(source));
@@ -201,29 +220,30 @@ export function compileFunction(source, format = /\\[A-Za-z]|[_^]\{/.test(source
   }
   const { name, body } = functionSide(parsed);
   const text = graphText(body);
-  if (text.length > 400) throw new Error('This function is too long to graph.');
-  const graph = compileEquation(`y = ${text}`);
+  const graph = graphOf(body);
   const spoken = latexToPlain(plainToLatex(latexToPlain(latex).replace(/^\s*(y|[a-z]\(x\))\s*=\s*/i, '')));
   graph.label = `${name || 'y'} = ${spoken}`;
   // rows: the formula (Sound Lab's syntax) and where it applies, for writing pgfplots code.
-  return { graph, label: graph.label, latex, dots: [], notes: [], rows: [{ text, intervals: [[-Infinity, Infinity]] }] };
+  return { graph, label: graph.label, latex, dots: [], notes: [], rows: [{ text, intervals: [[-Infinity, Infinity]] }],
+    parts: [{ ast: body, range: { otherwise: true } }] }; // the formula as read, for its derivative
 }
 
 function piecewise({ name, rows }, latex) {
   if (!rows.length) throw new Error('The cases have no rows.');
   const pieces = rows.map(([expr, cond], i) => {
-    let fn, text;
-    try { text = graphText(functionSide(parsePlain(latexToPlain(expr))).body); fn = compileEquation(`y = ${text}`); } catch (error) { throw new Error(`Row ${i + 1} (${latexToPlain(expr)}): ${error.message}`); }
+    let fn, text, ast;
+    try { ast = functionSide(parsePlain(latexToPlain(expr))).body; text = graphText(ast); fn = graphOf(ast); } catch (error) { throw new Error(`Row ${i + 1} (${latexToPlain(expr)}): ${error.message}`); }
     let range;
     try { range = parseCondition(latexToPlain(cond)); } catch (error) { throw new Error(`Row ${i + 1}, condition "${latexToPlain(cond)}": ${error.message}`); }
-    return { fn, text, range, expr: latexToPlain(expr), cond: range.otherwise ? 'otherwise' : latexToPlain(cond).replace(/\b(if|for|when)\b/gi, '').trim() };
+    return { fn, text, ast, range, expr: latexToPlain(expr), cond: range.otherwise ? 'otherwise' : latexToPlain(cond).replace(/\b(if|for|when)\b/gi, '').trim() };
   });
   const single = rows.length === 1 && !pieces[0].range.otherwise;
   // The first row whose condition holds decides, as when reading the cases top to bottom.
-  const pieceAt = (x) => pieces.find((p) => !p.range.otherwise && inRange(p.range, x)) || pieces.find((p) => p.range.otherwise) || null;
+  const pieceAt = rowAt(pieces);
   const valueOf = (p, x) => (p ? p.fn.limitAt(x) : { defined: false, hole: false, y: NaN });
   const graph = {
     type: 'function',
+    ...limitHooks((x) => graph.yAt(x)),
     // f(x), or the maths before the brace as words (|x|, for "sqrt(x^2) = |x| = cases").
     label: single
       // One formula on an interval is not piecewise: y = sin x (for 0 <= x <= 2 pi).
@@ -251,7 +271,13 @@ function piecewise({ name, rows }, latex) {
   };
   return { graph, label: graph.label, latex, dots: piecewiseDots(pieces, pieceAt), notes: single ? [`for ${pieces[0].cond}`] : pieces.map((p) => `${p.expr} when ${p.cond}`),
     domain: single ? [pieces[0].range.lo, pieces[0].range.hi] : null,
-    rows: pieces.map((p, i) => ({ text: p.text, intervals: rowIntervals(p, pieces.slice(0, i)) })) };
+    rows: pieces.map((p, i) => ({ text: p.text, intervals: rowIntervals(p, pieces.slice(0, i)) })),
+    parts: pieces.map((p) => ({ ast: p.ast, range: p.range })) };
+}
+
+// The row in use at x: the first whose condition holds, as when reading the cases top to bottom.
+function rowAt(pieces) {
+  return (x) => pieces.find((p) => !p.range.otherwise && inRange(p.range, x)) || pieces.find((p) => p.range.otherwise) || null;
 }
 
 // Where a row is the one in use, as intervals (its single points are drawn as dots instead).
@@ -393,7 +419,10 @@ export function landmarksOf(graph, boundary) {
     out.push(l);
   }
   let all = [...out, ...shapeMarks(graph, boundary, out), ...jumpMarks(graph, boundary, out)]
-    .filter((l) => !((l.kind === 'maximum' || l.kind === 'minimum') && Number.isFinite(l.y) && flatAround(l.x, l.y)));
+    .filter((l) => !((l.kind === 'maximum' || l.kind === 'minimum') && Number.isFinite(l.y) && flatAround(l.x, l.y)))
+    // A derivative worked out by rule has a value where its formula alone divides 0 by 0
+    // (x|x| at 0): no hole there.
+    .filter((l) => !(l.kind === 'open-point' && graph.filledAt?.(l.x)));
   // Corners and included ends can have zeros the smooth search misses. Check
   // the function's value, since the label may round a small height to zero.
   for (const l of [...all]) {
@@ -472,8 +501,10 @@ export function horizontalAsymptotes(f, [x0, x1]) {
     const off = ys.map((y) => Math.abs(y - L));
     const n = ys.length;
     if (!(off[n - 2] < 1e-4 * (1 + Math.abs(L)) && off[n - 3] <= off[n - 4] + 1e-12 && off[n - 2] <= off[n - 3] + 1e-12)) continue;
-    const edge = valueAt(f.graph, dir < 0 ? x0 : x1);
-    if (Number.isFinite(edge) && Math.abs(edge - L) <= 1e-9 * (1 + Math.abs(L))) continue;
+    // A curve that is at that height all along (y = 2) has no asymptote to report; one that only
+    // gets there (e^(-x^2), which is 0 to twelve digits at the edge of the graph) has.
+    const inside = [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1].map((t) => valueAt(f.graph, x0 + (x1 - x0) * t)).filter(Number.isFinite);
+    if (inside.length && inside.every((v) => Math.abs(v - L) <= 1e-9 * (1 + Math.abs(L)))) continue;
     out.push({ dir, y: Math.abs(L) < 1e-6 ? 0 : Number(L.toPrecision(6)) });
   }
   if (out.length === 2 && out[0].y === out[1].y) return [{ dir: 0, y: out[0].y }];
@@ -695,24 +726,222 @@ export function shapeMarks(graph, boundary, known = []) {
 // the function has a corner, a jump, a hole, an asymptote or an end; a corner shows as a jump
 // with two open dots.
 export function derivativeFunction(f, order, boundary, label) {
+  // By the rules of calculus when the formula is there (it is, for everything typed or read
+  // as maths); measured from the curve's heights only when no rule applies.
+  const first = ruleDerivative(f, boundary, order === 1 ? label : '');
+  const byRule = first && (order === 1 ? first : ruleDerivative(first, boundary, label));
+  if (byRule) return byRule;
+  return measuredDerivative(f, order, boundary, label);
+}
+
+// f' as a formula (derive.js), row by row for a function in pieces. The formula decides
+// everywhere except:
+//   where f itself has no value, or jumps: no derivative;
+//   where two rows meet: there is a derivative when f is continuous there and the slopes of the
+//     two rows come to the same number (x^2 up to 1, then 2x - 1: slope 2), and none otherwise
+//     (a corner);
+//   at a single point where the formula divides 0 by 0 but both sides come to one slope and f
+//     is continuous (x|x| at 0): that slope. (If f is continuous at a and f' has a limit there,
+//     that limit is f'(a): the mean value theorem.)
+function ruleDerivative(f, boundary, label) {
+  if (!f.parts?.length) return null;
+  let pieces;
+  try {
+    pieces = f.parts.map((p) => {
+      const ast = differentiate(reduced(p.ast));
+      const text = graphText(ast);
+      return { ast, text, range: p.range, fn: graphOf(ast) };
+    });
+  } catch { return null; }
+  const source = f.graph;
+  const pieceAt = rowAt(pieces);
+  const fAt = (x) => { const l = source.limitAt(x); return l.defined ? l.y : NaN; };
+  const clean = (v) => (Number.isFinite(v) ? (Math.abs(v) < 1e-13 ? 0 : v) : NaN);
+  const ends = [...new Set(pieces.flatMap((p) => (p.range.otherwise ? [] : [p.range.lo, p.range.hi, ...p.range.not])).filter(Number.isFinite))].sort((a, b) => a - b);
+  const endAt = (x) => ends.find((b) => Math.abs(b - x) <= 1e-9 * (1 + Math.abs(b)));
+  // Where a row's formula is heading at b from one side.
+  const rowSide = (b, dir) => {
+    const p = pieceAt(b + dir * 1e-7 * (1 + Math.abs(b)));
+    if (!p) return NaN;
+    const here = p.fn.limitAt(b);
+    if (here.defined) return here.y;
+    const side = sideLimit(p.fn.at, b, dir, { quick: true });
+    return Number.isFinite(side?.value) ? side.value : NaN;
+  };
+  // f does not jump at x: its heights a hair to each side are as near as the slope allows.
+  const steady = (x, slope) => {
+    const d = 1e-8 * Math.max(1, Math.abs(x));
+    const y = fAt(x), a = fAt(x - d), c = fAt(x + d);
+    if (![y, a, c].every(Number.isFinite)) return false;
+    const allow = 20 * d * (1 + Math.abs(slope)) + 64 * Number.EPSILON * (1 + Math.abs(y));
+    return Math.abs(a - y) <= allow && Math.abs(c - y) <= allow;
+  };
+  const filled = new Map(); // x where the formula has no value but the derivative has
+  // Where the function has a corner, a cusp, a jump or an end there is no derivative, whatever
+  // the formula gives at the nearest number the computer has (|sin x| at pi: sin is not quite 0
+  // there, so the formula alone would say slope 1).
+  const sharp = landmarksOf(source, boundary).filter((l) => ['corner', 'jump', 'endpoint'].includes(l.kind)).map((l) => l.x);
+  const value = (x) => {
+    if (!Number.isFinite(fAt(x))) return NaN;
+    if (sharp.some((c) => Math.abs(c - x) <= 1e-9 * (1 + Math.abs(c)))) return NaN;
+    const b = endAt(x);
+    if (b !== undefined) {
+      const l = rowSide(b, -1), r = rowSide(b, 1);
+      if (!Number.isFinite(l) || !Number.isFinite(r) || Math.abs(l - r) > 1e-7 * (1 + Math.abs(l) + Math.abs(r))) return NaN;
+      return steady(b, Math.max(Math.abs(l), Math.abs(r))) ? clean((l + r) / 2) : NaN;
+    }
+    const p = pieceAt(x);
+    if (!p) return NaN;
+    const s = p.fn.limitAt(x);
+    if (s.defined) return steady(x, s.y) ? clean(s.y) : NaN;
+    if (filled.has(x)) return filled.get(x);
+    const v = s.hole && steady(x, s.y) ? clean(s.y) : NaN;
+    if (Number.isFinite(v)) filled.set(x, v);
+    return v;
+  };
+  // Where the derivative itself is heading at x from one side: a number, or NaN.
+  const sideOf = (x, dir) => { const l = sideLimit(value, x, dir, { quick: true }); return Number.isFinite(l?.value) ? clean(l.value) : NaN; };
+  const agree = (p, q) => Math.abs(p - q) <= 1e-6 * (1 + Math.abs(p) + Math.abs(q));
+  // One row's formula from a to b, stepping over a point it cannot work out but the derivative has.
+  const rowUnbroken = (p, a, b, depth = 0) => {
+    if (p.fn.isContinuousBetween(a, b)) return true;
+    if (depth > 2 || b - a < 1e-7) return false;
+    let lo = a, hi = b;
+    for (let k = 0; k < 50 && hi - lo > 1e-11; k += 1) {
+      const mid = (lo + hi) / 2;
+      if (!p.fn.isContinuousBetween(lo, mid)) hi = mid; else if (!p.fn.isContinuousBetween(mid, hi)) lo = mid; else { lo = mid; hi = mid; break; }
+    }
+    const c = Number(((lo + hi) / 2).toFixed(8)) || 0, v = value(c), d = 1e-6 * (1 + Math.abs(c));
+    if (!Number.isFinite(v) || !agree(value(c - d), v) || !agree(value(c + d), v)) return false;
+    return (c - d <= a || rowUnbroken(p, a, c - d, depth + 1)) && (c + d >= b || rowUnbroken(p, c + d, b, depth + 1));
+  };
+  const graph = {
+    type: 'function', label, hasSteps: false,
+    yAt: value,
+    ...limitHooks(value),
+    limitAt(x) {
+      const v = value(x);
+      if (Number.isFinite(v)) return { defined: true, y: v };
+      const l = sideOf(x, -1), r = sideOf(x, 1);
+      const hole = Number.isFinite(l) && Number.isFinite(r) && agree(l, r);
+      return { defined: false, hole, y: hole ? clean(Number(((l + r) / 2).toPrecision(10))) : NaN };
+    },
+    isContinuousBetween(a, b) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      if (!source.isContinuousBetween(lo, hi)) return false;
+      // Rows that meet between lo and hi: the derivative must be there, with both sides at it.
+      const cuts = ends.filter((e) => e > lo - 1e-9 && e < hi + 1e-9);
+      for (const e of cuts) {
+        const v = value(e);
+        if (!Number.isFinite(v) || !agree(rowSide(e, -1), v) || !agree(rowSide(e, 1), v)) return false;
+      }
+      const marks = [lo, ...cuts.filter((e) => e > lo + 1e-9 && e < hi - 1e-9), hi];
+      for (let i = 0; i + 1 < marks.length; i += 1) {
+        const u = marks[i] + (i ? 1e-9 : 0), w = marks[i + 1] - (i + 2 < marks.length ? 1e-9 : 0);
+        const p = pieceAt((u + w) / 2);
+        if (!p || !rowUnbroken(p, u, w)) return false;
+      }
+      return true;
+    },
+    filledAt: (x) => [...filled.keys()].some((k) => Math.abs(k - x) < 1e-6) || (endAt(x) !== undefined && Number.isFinite(value(x))),
+    // Each row's own divisions by zero, only where that row is in use (as for a function in pieces).
+    domainChecks: pieces.flatMap((p) => p.fn.domainChecks.map((c) => ({ kind: c.kind, evaluate: (scope) => (pieceAt(scope.x) === p ? c.evaluate(scope) : NaN) }))),
+  };
+  // A jump's two open dots: where the function has a corner or its rows meet, and the two sides
+  // of the derivative settle at different heights.
+  const BREAKS = ['corner', 'jump', 'open-point', 'endpoint'];
+  const places = [...ends, ...sharp, ...landmarksOf(source, boundary).filter((l) => BREAKS.includes(l.kind)).map((l) => l.x), ...(f.dots || []).map((d) => d.coordinate[0])];
+  const dots = [];
+  for (const b of [...new Set(places.map((o) => Number(o.toFixed(9)) || 0))].sort((a, c) => a - c)) {
+    if (Math.abs(b) > boundary || Number.isFinite(value(b))) continue;
+    const l = sideOf(b, -1), r = sideOf(b, 1);
+    if (!Number.isFinite(l) || !Number.isFinite(r) || agree(l, r)) continue;
+    for (const v of [l, r].map((s) => clean(Number(s.toPrecision(10))))) dots.push({ kind: 'open dot', coordinate: [b, v], label: `jump at x = ${say(b)}: open dot at ${say(b)}, ${say(v)}` });
+  }
+  return { graph, label, latex: '', dots, notes: [], domain: f.domain || null, rows: [], exact: true,
+    parts: pieces.map((p) => ({ ast: p.ast, range: p.range })) };
+}
+
+// The older way, kept for a function with no formula to apply the rules to.
+function measuredDerivative(f, order, boundary, label) {
   const source = f.graph;
   const y = (x) => { const l = source.limitAt(x); return l.defined ? l.y : NaN; };
   const BREAKS = ['corner', 'jump', 'asymptote', 'open-point', 'endpoint'];
   const breaks = [...landmarksOf(source, boundary).filter((l) => BREAKS.includes(l.kind)).map((l) => l.x), ...(f.dots || []).map((d) => d.coordinate[0])];
   // The second derivative also breaks where the first has a corner (x|x| at 0).
-  if (order === 2) breaks.push(...landmarksOf(derivativeFunction(f, 1, boundary, '').graph, boundary).filter((l) => l.kind === 'corner').map((l) => l.x));
-  const base = order === 1 ? 1e-5 : 1e-3, digits = order === 1 ? 8 : 5;
-  const value = (x) => {
-    // Never across a break: close to one, the two heights are taken closer in.
+  if (order === 2) breaks.push(...landmarksOf(measuredDerivative(f, 1, boundary, '').graph, boundary).filter((l) => l.kind === 'corner').map((l) => l.x));
+  const digits = order === 1 ? 8 : 5;
+  // The slope of g at x from one side (dir -1: the left). The slopes towards x over the steps
+  // h, h/2, h/4 and h/8 are combined so that the error of a step that is not zero cancels, and
+  // two such results that agree are the slope. Where they do not agree (a corner of g within
+  // reach), the steps are made ten times smaller, three times. NaN when they never agree.
+  // noise: how exactly g itself is known. (Taking the heights a hundred-thousandth to each side,
+  // as before, made the derivative of x|x| at 0 "0.00001" and its second derivative "0" there.)
+  const oneSide = (g, gx, x, dir, reach, noise) => {
+    for (let h = reach, tries = 0; tries < 4; h /= 10, tries += 1) {
+      const d = [0, 1, 2, 3].map((k) => { const t = x + (dir * h) / 2 ** k; return (g(t) - gx) / (t - x); });
+      if (!d.every(Number.isFinite)) continue;
+      const r0 = (8 * d[2] - 6 * d[1] + d[0]) / 3, r1 = (8 * d[3] - 6 * d[2] + d[1]) / 3;
+      if (Math.abs(r0 - r1) <= 1e-7 * (1 + Math.abs(r1)) + (40 * noise) / h) return r1;
+    }
+    return NaN;
+  };
+  // Both sides, where they agree: the derivative of g at x. NaN where g has a corner or no value.
+  const derive = (g, x, reach, noiseOf, agree) => {
+    const gx = g(x);
+    if (!Number.isFinite(gx)) return NaN;
+    const noise = noiseOf(gx);
+    const l = oneSide(g, gx, x, -1, reach, noise), r = oneSide(g, gx, x, 1, reach, noise);
+    if (Number.isFinite(l) && Number.isFinite(r)) return Math.abs(l - r) > agree * (1 + Math.abs(l) + Math.abs(r)) ? NaN : (l + r) / 2;
+    // Heights too rough for that (a quotient right beside its hole): the plain slopes to each
+    // side, which still tell a corner (they differ) from a smooth place (their middle).
+    const a = (gx - g(x - reach)) / reach, b = (g(x + reach) - gx) / reach;
+    return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 1e-3 * (1 + Math.abs(a) + Math.abs(b)) ? (a + b) / 2 : NaN;
+  };
+  const reachAt = (x, base) => {
+    // Never across a break: close to one, the heights are taken closer in.
     const near = Math.min(...breaks.map((b) => Math.abs(b - x)), Infinity);
-    if (near < 1e-9) return NaN;
+    if (near < 1e-9) return 0;
     const h = Math.min(base * Math.max(1, Math.abs(x)), near / 2);
-    if (!source.isContinuousBetween(x - h, x + h)) return NaN;
-    const v = order === 1 ? (y(x + h) - y(x - h)) / (2 * h) : (y(x + h) - 2 * y(x) + y(x - h)) / (h * h);
+    return source.isContinuousBetween(x - h, x + h) ? h : 0;
+  };
+  const first = (x) => { const h = reachAt(x, 1e-4); return h ? derive(y, x, h, (v) => 4 * Number.EPSILON * Math.abs(v), 1e-6) : NaN; };
+  const second = (x) => { const h = reachAt(x, 1e-3); return h ? derive(first, x, h, (v) => 1e-10 * (1 + Math.abs(v)), 1e-4) : NaN; };
+  const value = (x) => {
+    const v = order === 1 ? first(x) : second(x);
     return Number.isFinite(v) ? Number(v.toFixed(digits)) || 0 : NaN;
   };
-  // Each side of a break, a little away from it.
-  const sides = (b) => [value(b - 1e-4), value(b + 1e-4)];
+  // The second derivative jumps where the first has a corner that the function itself does not
+  // show (x|x| at 0: its derivative 2|x| has a corner, so the second derivative is minus 2, then
+  // 2). Such a place is found by its jump: two heights a step apart that differ much, closed in
+  // on, and kept only when the two sides still differ right beside it.
+  if (order === 2) {
+    const N = 800, at = (i) => -boundary + (2 * boundary * i) / N;
+    let px = at(0), pv = second(px);
+    for (let i = 1; i <= N; i += 1) {
+      const x = at(i), v = second(x);
+      if (!Number.isFinite(v)) continue; // no height right at the corner itself: the next step sees the jump
+      if (Number.isFinite(pv) && x - px < (8 * boundary) / N && Math.abs(v - pv) > 0.25 * (1 + Math.abs(v) + Math.abs(pv)) && !breaks.some((o) => o > px - 1e-9 && o < x + 1e-9)) {
+        let a = px, b = x, va = pv, vb = v;
+        for (let k = 0; k < 40 && b - a > 1e-9; k += 1) {
+          const mid = (a + b) / 2, vm = second(mid);
+          if (!Number.isFinite(vm)) { a = mid; b = mid; break; }
+          if (Math.abs(vm - va) < Math.abs(vm - vb)) { a = mid; va = vm; } else { b = mid; vb = vm; }
+        }
+        const found = (a + b) / 2, place = Math.abs(found - Number(found.toFixed(6))) < 2e-6 ? Number(found.toFixed(6)) || 0 : found;
+        const l = second(place - 1e-5), r = second(place + 1e-5);
+        if (Number.isFinite(l) && Number.isFinite(r) && Math.abs(l - r) > 0.05 * (1 + Math.abs(l) + Math.abs(r))) breaks.push(place);
+      }
+      px = x; pv = v;
+    }
+  }
+  // Each side of a break, a little away from it, and closer still: a curve that settles there
+  // has the same height at both distances; one that runs off to infinity does not (the
+  // derivative of x^(1/3) at 0 was "a hole at 155").
+  const sides = (b) => [-1, 1].map((dir) => {
+    const far = value(b + dir * 1e-4), close = value(b + dir * 1e-5);
+    return Number.isFinite(far) && Number.isFinite(close) && Math.abs(far - close) > 1e-2 * (1 + Math.abs(close)) ? NaN : far;
+  });
   const settled = (v) => Number.isFinite(v) && Math.abs(v) < 1e6;
   const graph = {
     type: 'function', label, hasSteps: false, domainChecks: [],

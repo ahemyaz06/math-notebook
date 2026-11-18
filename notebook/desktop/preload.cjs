@@ -4,9 +4,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('notebook', {
   onCommand: (handler) => ipcRenderer.on('command', (_event, name) => handler(name)),
   choosePdf: () => ipcRenderer.invoke('choose-pdf'),
+  chooseImport: () => ipcRenderer.invoke('choose-import'),
   openNotebook: () => ipcRenderer.invoke('open-notebook'),
   openText: (options) => ipcRenderer.invoke('open-text', options),
   save: (options) => ipcRenderer.invoke('save', options),
+  chooseSave: (options) => ipcRenderer.invoke('choose-save', options),
   writeDraft: (draft) => ipcRenderer.invoke('recovery-write', draft),
   clearDraft: () => ipcRenderer.invoke('recovery-clear'),
   listDrafts: () => ipcRenderer.invoke('recovery-list'),

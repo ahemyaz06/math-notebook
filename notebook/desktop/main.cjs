@@ -70,28 +70,36 @@ function startServer(dataDir) {
 const send = (command) => () => win?.webContents.send('command', command);
 
 function buildMenu() {
-  // Seven menus, the same keys as Word wherever Word has them. What belongs together is one
-  // submenu (Export, Table, Graph, Teacher) instead of a menu of its own.
+  // Eight menus, the same keys as Word wherever Word has them. What belongs together is one
+  // submenu (Save as, Table, Graph, Teacher) instead of a menu of its own. Import has a menu of
+  // its own: one item for each kind of file the notebook can read, each with its own file box.
   const template = [
     { label: '&File', submenu: [
       { label: '&New', accelerator: 'Ctrl+N', click: send('new') },
       { label: '&Open notebook…', accelerator: 'Ctrl+O', click: send('open') },
-      { label: '&Import PDF…', accelerator: 'Ctrl+Shift+I', click: send('importPdf') },
-      { label: 'Import &LaTeX (.tex)…', click: send('importTex') },
       { type: 'separator' },
       { label: '&Save', accelerator: 'Ctrl+S', click: send('save') },
-      { label: 'Save &as…', accelerator: 'Ctrl+Shift+S', click: send('saveAs') },
-      { label: 'Reco&ver unsaved work…', click: send('recover') },
-      { type: 'separator' },
-      { label: '&Export', submenu: [
+      // Every kind of file in one place, as in Word's Save As. Each opens the same save box,
+      // whose "Save as type" list has them all, the one chosen here first.
+      { label: 'Save &as', submenu: [
+        { label: '&Notebook…', accelerator: 'Ctrl+Shift+S', click: send('saveAs') },
         { label: '&Word document…', accelerator: 'Ctrl+Shift+W', click: send('exportDocx') },
         { label: '&PDF…', click: send('exportPdf') },
         { label: 'W&eb page…', click: send('exportHtml') },
         { label: '&Braille (BRF)…', click: send('exportBraille') },
       ] },
+      { label: 'Reco&ver unsaved work…', click: send('recover') },
       { label: '&Print…', accelerator: 'Ctrl+P', click: send('print') },
       { type: 'separator' },
       { label: 'E&xit', role: 'quit' },
+    ] },
+    // Alt+P: Alt+I is the Insert menu. Only what the notebook really reads is here; Word files,
+    // web pages and MathML are saved or pasted, not imported.
+    { label: 'Im&port', submenu: [
+      { label: '&PDF…', accelerator: 'Ctrl+Shift+I', click: send('importPdf') },
+      { label: '&LaTeX (.tex)…', click: send('importTex') },
+      { type: 'separator' },
+      { label: '&Any file it can read (PDF or LaTeX)…', click: send('importAny') },
     ] },
     { label: '&Edit', submenu: [
       { label: '&Undo', accelerator: 'Ctrl+Z', click: send('undo') }, { label: '&Redo', accelerator: 'Ctrl+Y', click: send('redo') }, { type: 'separator' },
@@ -156,6 +164,9 @@ function buildMenu() {
         { label: '&Explore graph by sound', accelerator: 'Ctrl+G', click: send('exploreGraph') },
         { label: 'Dra&w on the graph (Ctrl+D)', click: send('editGraph') },
         { label: '&Copy graph as LaTeX (pgfplots)', click: send('copyGraphLatex') },
+        { label: 'Show or &hide this graph\'s description', accelerator: 'F4', click: send('graphWords') },
+        { label: 'Show or hide ever&y graph\'s description', accelerator: 'Shift+F4', click: send('graphWordsAll') },
+        { label: 'Numbers in descriptions: rounded or as read', accelerator: 'F2', click: send('graphLineNumbers') },
         { type: 'separator' },
         { label: 'Men&u of everything in graph mode (Ctrl+Enter there)', click: send('graphMenu') },
         { label: '&Play or stop (Space in graph mode)', click: send('graphPlay') },
@@ -191,8 +202,8 @@ function buildMenu() {
         { type: 'separator' },
         { id: 'studentPreview', label: '&Preview student copy', type: 'checkbox', click: send('studentPreview') },
         { label: '&Save student copy…', click: send('saveStudentCopy') },
-        { label: 'E&xport student copy as Word document…', click: send('exportStudentDocx') },
-        { label: 'Export student copy as P&DF…', click: send('exportStudentPdf') },
+        { label: 'Save student copy as W&ord document…', click: send('exportStudentDocx') },
+        { label: 'Save student copy as P&DF…', click: send('exportStudentPdf') },
       ] },
     ] },
     { label: '&Help', submenu: [
@@ -212,7 +223,7 @@ function buildMenu() {
   // but does not register them: otherwise a key press could run its command twice.
   const pageKeys = new Set(['Ctrl+B', 'Ctrl+I', 'Ctrl+U', 'Ctrl+Shift+L', 'Ctrl+Shift+7', 'Ctrl+Enter', 'Ctrl+Alt+1', 'Ctrl+Alt+2',
     'Ctrl+Alt+3', 'Ctrl+Alt+0', 'Ctrl+Shift+E', 'Ctrl+E', 'Alt+=', 'Ctrl+F', 'Ctrl+H', 'F3', 'Shift+F3', 'Ctrl+Shift+M', 'Ctrl+Shift+W',
-    'Ctrl+Shift+V', 'Ctrl+PageDown', 'Ctrl+PageUp', 'Ctrl+Shift+H', 'F1', 'Ctrl+G', 'Ctrl+Shift+G', 'Ctrl+F9', 'Ctrl+Shift+F9', 'F11', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+L',
+    'Ctrl+Shift+V', 'F4', 'Shift+F4', 'F2', 'Ctrl+PageDown', 'Ctrl+PageUp', 'Ctrl+Shift+H', 'F1', 'Ctrl+G', 'Ctrl+Shift+G', 'Ctrl+F9', 'Ctrl+Shift+F9', 'F11', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+L',
     'Ctrl+Shift+D', 'F7', 'Alt+F7', 'Ctrl+Z', 'Ctrl+Y', 'F9']);
   const leaveToPage = (items) => {
     for (const item of items) {
@@ -233,6 +244,19 @@ function registerFileHandlers(recovery) {
   ipcMain.handle('choose-pdf', async () => {
     const result = await dialog.showOpenDialog(win, { title: 'Import PDF', properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] });
     return result.canceled ? null : result.filePaths[0];
+  });
+  // Import > Any file: one box for every kind the notebook can read. Says which kind was chosen
+  // (by its ending); a LaTeX file comes back with its text, as open-text gives it.
+  ipcMain.handle('choose-import', async () => {
+    const tex = ['tex', 'latex', 'ltx'];
+    const result = await dialog.showOpenDialog(win, { title: 'Import', properties: ['openFile'], filters: [
+      { name: 'PDF or LaTeX', extensions: ['pdf', ...tex] }, { name: 'PDF', extensions: ['pdf'] }, { name: 'LaTeX', extensions: tex }] });
+    if (result.canceled) return null;
+    const file = result.filePaths[0];
+    const ending = path.extname(file).slice(1).toLowerCase();
+    if (ending === 'pdf') return { kind: 'pdf', path: file };
+    if (tex.includes(ending)) return { kind: 'tex', path: file, content: fs.readFileSync(file, 'utf8') };
+    return { kind: null, path: file };
   });
   // Files the person chose in a dialog: only these are saved over without asking again.
   const chosen = new Set();
@@ -261,35 +285,61 @@ function registerFileHandlers(recovery) {
     else await writeAtomic(file, content);
     return file;
   });
-  ipcMain.handle('save-binary', async (_event, { name, bytes, filters }) => {
-    const result = await dialog.showSaveDialog(win, { title: 'Export', defaultPath: name, filters });
-    if (result.canceled) return null;
-    fs.writeFileSync(result.filePath, Buffer.from(bytes));
-    return result.filePath;
+  // Save as: one save box for every kind of file, as in Word. "Save as type" lists them, the one
+  // asked for first. Returns the file and its kind (from its ending), or null.
+  const SAVE_TYPES = {
+    notebook: { name: 'Math Notebook', extensions: ['mathnb'] },
+    pdf: { name: 'PDF', extensions: ['pdf'] },
+    docx: { name: 'Word document', extensions: ['docx'] },
+    html: { name: 'Web page', extensions: ['html'] },
+    brf: { name: 'Braille ready file', extensions: ['brf'] },
+  };
+  ipcMain.handle('choose-save', async (_event, { name, first = 'notebook', only = null }) => {
+    const kinds = only ? [only] : [first, ...Object.keys(SAVE_TYPES).filter((k) => k !== first)];
+    const result = await dialog.showSaveDialog(win, { title: 'Save as', defaultPath: `${name}.${SAVE_TYPES[first].extensions[0]}`, filters: kinds.map((k) => SAVE_TYPES[k]) });
+    if (result.canceled || !result.filePath) return null;
+    let file = result.filePath;
+    const ending = path.extname(file).slice(1).toLowerCase();
+    let kind = kinds.find((k) => SAVE_TYPES[k].extensions.includes(ending) || (k === 'html' && ending === 'htm'));
+    if (!kind) { kind = first; file += `.${SAVE_TYPES[kind].extensions[0]}`; }
+    chosen.add(file);
+    return { path: file, kind };
+  });
+  // A file chosen in the save box above, or a save box of its own.
+  const fileFor = async (target, options) => {
+    if (target && chosen.has(target)) return target;
+    const result = await dialog.showSaveDialog(win, options);
+    return result.canceled ? null : result.filePath;
+  };
+  ipcMain.handle('save-binary', async (_event, { path: target, name, bytes, filters }) => {
+    const file = await fileFor(target, { title: 'Save as', defaultPath: name, filters });
+    if (!file) return null;
+    fs.writeFileSync(file, Buffer.from(bytes));
+    return file;
   });
   // Braille: the page's XHTML, made into a .brf by BrailleBlaster (notebook/braille.py).
-  ipcMain.handle('export-braille', async (_event, { name, page }) => {
-    const result = await dialog.showSaveDialog(win, { title: 'Export as braille', defaultPath: name, filters: [{ name: 'Braille ready file', extensions: ['brf'] }] });
-    if (result.canceled) return null;
+  ipcMain.handle('export-braille', async (_event, { path: target, name, page }) => {
+    const file = await fileFor(target, { title: 'Save as braille', defaultPath: name, filters: [SAVE_TYPES.brf] });
+    if (!file) return null;
     const response = await fetch(`${serverUrl}api/braille`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': serverToken },
-      body: JSON.stringify({ path: result.filePath, page }) });
+      body: JSON.stringify({ path: file, page }) });
     const answer = await response.json().catch(() => ({}));
     if (!response.ok) return { error: answer.error || 'The braille could not be made.' };
     return answer;
   });
-  ipcMain.handle('export-pdf', async (_event, { name, notebook }) => {
-    const result = await dialog.showSaveDialog(win, { title: 'Export as PDF', defaultPath: name, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
-    if (result.canceled) return null;
+  ipcMain.handle('export-pdf', async (_event, { path: target, name, notebook }) => {
+    const file = await fileFor(target, { title: 'Save as PDF', defaultPath: name, filters: [SAVE_TYPES.pdf] });
+    if (!file) return null;
     // Tagged, with an outline from the headings, so a PDF reader can move by heading.
     const data = await win.webContents.printToPDF({ pageSize: 'Letter', printBackground: false, generateTaggedPDF: true, generateDocumentOutline: true });
-    fs.writeFileSync(result.filePath, data);
+    fs.writeFileSync(file, data);
     // The notebook goes inside as a standard PDF attachment; Math Notebook opens it exactly.
     if (notebook) {
       const response = await fetch(`${serverUrl}api/attach`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': serverToken },
-        body: JSON.stringify({ path: result.filePath, notebook }) });
+        body: JSON.stringify({ path: file, notebook }) });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'The notebook could not be attached.');
     }
-    return result.filePath;
+    return file;
   });
   ipcMain.handle('print', () => new Promise((resolve) => win.webContents.print({}, (ok) => resolve(ok))));
   ipcMain.handle('copy-text', (_event, text) => clipboard.writeText(String(text)));

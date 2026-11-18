@@ -15,12 +15,13 @@
 //   f'(x) = ..., dy/dx = ...:    compared with the measured slope of the function above
 //   lim, definite integrals:     worked out by numbers; an integral with no limits is checked
 //                                by taking the slope of the answer
+//   a line that starts with =:   it carries on from the line above (as when factoring), so it
+//                                must equal what the line above ended with, whatever that line is
 // A wrong "not the same" would be worse than no answer, so anything unsure says so instead.
 
-import { parsePlain, splitDomain } from './equation.js';
+import { parsePlain, splitDomain, unreadCommands } from './equation.js';
+import { Unsupported, no, slopeOf, slope, heading, headingToZero, headingOverTheTop, settles, limit, area, SIMPLE_FUNCTIONS, INVERSE, unwrap, isMinusOne, letterName, slopeSign, leftmost, withoutLeftmost, primed, power, value, defined, slopeAt, isDx, ONE, withoutDx, strippedTop, integrand } from './maths.js';
 
-class Unsupported extends Error {}
-const no = (message) => { throw new Unsupported(message); };
 
 // ---------- numbers ----------
 
@@ -75,247 +76,6 @@ export function samplePoints(range = EVERY_X) {
   }
   return [...new Set(points.map(tidy))].filter((x) => inside(range, x));
 }
-
-// ---------- measuring slopes, limits and areas ----------
-
-// The slope of g at x, measured with two step sizes. Where the two do not agree (a curve that
-// wiggles faster than the step), a finer pair is tried; a slope that never settles is no value,
-// so that number is left out of the comparison instead of giving a wrong answer.
-function slope(g, x, order = 1) {
-  if (order > 2) no('Third and higher derivatives are not checked.');
-  if (!Number.isFinite(x)) return NaN;
-  const once = order === 1
-    ? (h) => (-g(x + 2 * h) + 8 * g(x + h) - 8 * g(x - h) + g(x - 2 * h)) / (12 * h)
-    : (h) => (-g(x + 2 * h) + 16 * g(x + h) - 30 * g(x) + 16 * g(x - h) - g(x - 2 * h)) / (12 * h * h);
-  let h = (order === 1 ? 2e-3 : 2e-2) * (1 + Math.abs(x)), wide = once(h);
-  for (let k = 0; k < 5; k += 1) {
-    h /= 2;
-    const fine = once(h);
-    if (!Number.isFinite(fine)) return NaN;
-    if (Math.abs(fine - wide) <= (order === 1 ? 1e-7 : 1e-5) * (1 + Math.abs(fine))) return fine;
-    wide = fine;
-  }
-  return NaN;
-}
-
-// Where a list of values taken ever closer is heading: steady, shrinking steps (continued to
-// their end), growing without bound, or not clear (NaN).
-function heading(values) {
-  if (!values.every(Number.isFinite)) return NaN;
-  const [a, b, c, d] = values;
-  const d1 = b - a, d2 = c - b, d3 = d - c;
-  const size = 1 + Math.abs(d);
-  if (Math.abs(d3) <= 1e-10 * size && Math.abs(d2) <= 1e-8 * size) return d;
-  const r1 = d2 / d1, r2 = d3 / d2;
-  if (Number.isFinite(r1) && Number.isFinite(r2) && r2 > 0 && r2 < 0.9 && Math.abs(r1 - r2) < 0.12) return d + d3 * r2 / (1 - r2);
-  // Settled but for the rounding of very small numbers ((1 - cos x)/x^2 near 0): the steadier of the last two.
-  if (Math.abs(d3) <= 1e-6 * size && Math.abs(d2) <= 1e-4 * size) return Math.abs(d3) > Math.abs(d2) ? c : d;
-  if (Math.abs(d) > 1e3 && Math.abs(d) > 3 * Math.abs(c) && Math.abs(c) > 3 * Math.abs(b) && Math.sign(d) === Math.sign(c)) return Math.sign(d) * Infinity;
-  return NaN;
-}
-
-function limit(g, a, side) {
-  if (a === Infinity || a === -Infinity) return heading([1e2, 1e3, 1e4, 1e5].map((x) => g(Math.sign(a) * x)));
-  if (!Number.isFinite(a)) return NaN;
-  const scale = Math.max(1, Math.abs(a));
-  const from = (dir) => heading([1e-2, 1e-3, 1e-4, 1e-5].map((h) => g(a + dir * h * scale)));
-  if (side) return from(side);
-  const left = from(-1), right = from(1);
-  if (left === right) return left;
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return NaN;
-  return Math.abs(left - right) <= 1e-5 * (1 + Math.abs(left)) ? (left + right) / 2 : NaN; // two sides disagree: no limit
-}
-
-function area(g, a, b) {
-  if (!Number.isFinite(a) || !Number.isFinite(b)) no('Integrals to infinity are not checked yet.');
-  const n = 2000, h = (b - a) / n;
-  let sum = g(a) + g(b);
-  for (let i = 1; i < n; i += 1) sum += g(a + i * h) * (i % 2 ? 4 : 2);
-  return sum * h / 3;
-}
-
-// ---------- working out a parsed line's value ----------
-
-const SIMPLE_FUNCTIONS = {
-  sin: Math.sin, cos: Math.cos, tan: (x) => (Math.abs(Math.cos(x)) < 1e-15 ? NaN : Math.tan(x)),
-  sec: (x) => 1 / Math.cos(x), csc: (x) => 1 / Math.sin(x), cot: (x) => Math.cos(x) / Math.sin(x),
-  arcsin: Math.asin, arccos: Math.acos, arctan: Math.atan, arcsec: (x) => Math.acos(1 / x), arccsc: (x) => Math.asin(1 / x), arccot: (x) => Math.atan2(1, x),
-  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh, sech: (x) => 1 / Math.cosh(x), csch: (x) => 1 / Math.sinh(x), coth: (x) => 1 / Math.tanh(x),
-  asinh: Math.asinh, acosh: Math.acosh, atanh: Math.atanh, ln: Math.log, log: Math.log10, exp: Math.exp, sign: Math.sign,
-};
-const INVERSE = { sin: 'arcsin', cos: 'arccos', tan: 'arctan', sec: 'arcsec', csc: 'arccsc', cot: 'arccot', sinh: 'asinh', cosh: 'acosh', tanh: 'atanh' };
-
-const unwrap = (n) => { while (n?.type === 'paren' && n.inner.type !== 'list') n = n.inner; return n; };
-const isMinusOne = (n) => { n = unwrap(n); return n?.type === 'neg' && n.arg.type === 'num' && Number(n.arg.value) === 1; };
-// The name a letter goes by: x, theta, x_1.
-function letterName(n) {
-  if (n.type === 'var') return n.name;
-  if (n.type === 'sym' && /^\\[A-Za-z]+$/.test(n.latex) && !['\\pi', '\\infty', '\\pm'].includes(n.latex)) return n.latex.slice(1);
-  if (n.type === 'sub') { const base = letterName(n.base), sub = unwrap(n.sub); return base && `${base}_${sub.type === 'num' ? sub.value : letterName(sub) || '?'}`; }
-  return null;
-}
-// d/dx written as a fraction: the letter after the d, or null.
-const slopeSign = (n) => (n?.type === 'frac' && n.num.type === 'var' && n.num.name === 'd' && n.den.type === 'sym' && /^d[a-zA-Z]$/.test(n.den.latex) ? n.den.latex[1] : null);
-const leftmost = (n) => { while (n.type === 'mul') n = n.left; return n; };
-const withoutLeftmost = (n) => (n.left.type === 'mul' ? { ...n, left: withoutLeftmost(n.left) } : n.right);
-// f' and f'': the letter and how many primes.
-function primed(n) {
-  let order = 0;
-  while (n.type === 'prime') { order += 1; n = n.arg; }
-  return order ? { order, of: n } : null;
-}
-
-function power(base, exponent) {
-  if (!Number.isFinite(base) || !Number.isFinite(exponent)) return NaN;
-  if (base === 0 && exponent <= 0) return NaN;
-  if (base < 0 && !Number.isInteger(exponent)) {
-    // The real odd root, as in class: (-8)^(1/3) is -2.
-    for (let q = 3; q <= 99; q += 2) {
-      const p = Math.round(exponent * q);
-      if (Math.abs(exponent * q - p) <= 1e-9 * q) { const size = Math.abs(base) ** exponent; return Math.abs(p) % 2 === 1 ? -size : size; }
-    }
-    return NaN;
-  }
-  return base ** exponent;
-}
-
-// scope: { vars: {x: 1.7, a: 1.3}, defs: {f: {param: 'x', body}, y: {param: null, body}}, pm: 1 or -1, main: 'x' }
-function value(n, s) {
-  switch (n.type) {
-    case 'num': return Number(n.value);
-    case 'native': return n.f(s.vars.x);
-    case 'var': case 'sym': case 'sub': {
-      if (n.type === 'sym' && n.latex === '\\pi') return Math.PI;
-      if (n.type === 'sym' && n.latex === '\\infty') return Infinity;
-      if (n.type === 'sym' && n.latex === '\\underline{\\qquad}') no('A blank to fill in has no value.');
-      const name = letterName(n);
-      if (!name) no(`${n.latex || 'This'} has no value here.`);
-      if (Object.hasOwn(s.vars, name)) return s.vars[name];
-      if (name === 'e') return Math.E;
-      const def = s.defs[name];
-      if (def && !def.param) return defined(def, s);
-      if (def) no(`${name} is a function here; write ${name}(${def.param}).`);
-      no(`The letter ${name} has no value.`);
-    }
-    // falls through never: every branch above returns or throws
-    case 'bin': {
-      const a = value(n.left, s), b = value(n.right, s);
-      if (n.op === '+-') { s.usedPm = true; return a + s.pm * b; }
-      return n.op === '+' ? a + b : a - b;
-    }
-    case 'neg': return -value(n.arg, s);
-    case 'mul': {
-      if (n.left.type === 'sym' && n.left.latex === '\\pm') { s.usedPm = true; return s.pm * value(n.right, s); }
-      // d/dx in front of a product applies to all of it: d/dx 3x^2.
-      const variable = slopeSign(leftmost(n));
-      if (variable) return slopeAt(withoutLeftmost(n), variable, s);
-      if (!n.explicit && n.right.type === 'paren' && n.right.inner.type !== 'list') {
-        // f(x) and f'(x), when f is a function written on a line above.
-        const mark = primed(n.left), letter = letterName(mark ? mark.of : n.left), def = letter && s.defs[letter];
-        if (def?.param) {
-          const at = value(n.right.inner, s);
-          const f = (v) => value(def.body, { ...s, vars: { ...s.vars, [def.param]: v } });
-          return mark ? slope(f, at, mark.order) : f(at);
-        }
-      }
-      return value(n.left, s) * value(n.right, s);
-    }
-    case 'frac': {
-      if (slopeSign(n)) no('Write what d/dx applies to after it, in brackets.');
-      if (unwrap(n.num).type === 'mul' && slopeSign(leftmost(unwrap(n.num)))) no('Put brackets around what d/dx applies to, as in d/dx (1/x).');
-      // dy/dx and df/dx, for a y or f written on a line above.
-      if (n.den.type === 'sym' && /^d[a-zA-Z]$/.test(n.den.latex)) {
-        const of = n.num.type === 'sym' && /^d[a-zA-Z]$/.test(n.num.latex) ? n.num.latex[1]
-          : n.num.type === 'mul' && n.num.left.type === 'var' && n.num.left.name === 'd' ? letterName(n.num.right) : null;
-        const def = of && s.defs[of];
-        if (def) return slopeAt(def.body, n.den.latex[1], s);
-        if (of) no(`${of} is not written as a function on a line above.`);
-      }
-      const bottom = value(n.den, s);
-      return bottom === 0 ? NaN : value(n.num, s) / bottom;
-    }
-    case 'pow':
-      if (n.exp.type === 'sym' && (n.exp.latex === '+' || n.exp.latex === '-')) no('A one-sided sign (a^+) belongs under a limit.');
-      return power(value(n.base, s), value(n.exp, s));
-    case 'paren':
-      if (n.inner.type === 'list') no('A point or an interval is not a number.');
-      return value(n.inner, s);
-    case 'abs': return Math.abs(value(n.arg, s));
-    case 'sqrt': {
-      const inner = value(n.arg, s);
-      if (!n.index) return inner < 0 ? NaN : Math.sqrt(inner);
-      const index = typeof n.index === 'string' ? Number(n.index) : value(n.index, s);
-      return power(inner, 1 / index);
-    }
-    case 'fn': {
-      const inverse = isMinusOne(n.power) && INVERSE[n.name];
-      const f = SIMPLE_FUNCTIONS[inverse || n.name];
-      if (!f) no(`${n.name} is not checked yet.`);
-      const at = value(n.arg, s);
-      let out = n.name === 'log' && n.base ? Math.log(at) / Math.log(value(n.base, s)) : f(at);
-      if ((n.name === 'ln' || n.name === 'log') && !(at > 0)) out = NaN;
-      return n.power && !inverse ? power(out, value(n.power, s)) : out;
-    }
-    case 'fact': {
-      const k = value(n.arg, s);
-      if (!Number.isInteger(k) || k < 0 || k > 170) return NaN;
-      let out = 1;
-      for (let i = 2; i <= k; i += 1) out *= i;
-      return out;
-    }
-    case 'prime': {
-      const mark = primed(n), letter = letterName(mark.of), def = letter && s.defs[letter];
-      if (def && !def.param) return slopeAt(def.body, s.main, s, mark.order); // y'
-      if (def) no(`Write ${letter}'(${def.param}) with its brackets.`);
-      if (mark.of.type === 'paren') return slopeAt(mark.of, s.main, s, mark.order); // (x^2)'
-      no(`${letter || 'This'}' is the derivative of a function that is not written on a line above.`);
-    }
-    // falls through never
-    case 'lim': {
-      const under = unwrap(n.under);
-      if (under?.type !== 'rel' || under.op !== '->') no('The limit needs what x goes to, as in lim_(x->2).');
-      const variable = letterName(under.left);
-      let target = under.right, side = 0;
-      if (target.type === 'pow' && target.exp.type === 'sym') { side = target.exp.latex === '+' ? 1 : -1; target = target.base; }
-      const g = (v) => value(n.arg, { ...s, vars: { ...s.vars, [variable]: v } });
-      s.measured = true;
-      return limit(g, value(target, s), side);
-    }
-    case 'large': {
-      if (n.latex !== '\\int') no(n.latex === '\\sum' || n.latex === '\\prod' ? 'Sums and products are not checked yet.' : 'Only single integrals are checked.');
-      const inner = integrand(n);
-      if (!n.sub || !n.sup) no('An integral with no limits is compared by its slope; write it alone on one side of the = sign.');
-      const g = (v) => value(inner.body, { ...s, vars: { ...s.vars, [inner.variable]: v } });
-      s.measured = true;
-      return area(g, value(n.sub, s), value(n.sup, s));
-    }
-    case 'rel': no('Only one comparison at a time can be checked here.');
-    // falls through never
-    case 'list': no('A list of things is not a number.');
-    // falls through never
-    default: no('This kind of maths is not checked yet.');
-  }
-  return NaN;
-}
-
-function defined(def, s) {
-  if ((s.depth || 0) > 8) no('The functions above are written in terms of each other.');
-  return value(def.body, { ...s, depth: (s.depth || 0) + 1 });
-}
-
-function slopeAt(body, variable, s, order = 1) {
-  if (!variable || !Object.hasOwn(s.vars, variable)) no(`The derivative is with respect to ${variable || 'a letter'}, which is not in the line.`);
-  s.measured = true;
-  return slope((v) => value(body, { ...s, vars: { ...s.vars, [variable]: v } }), s.vars[variable], order);
-}
-
-// What is inside an integral, and its letter: int x^2 dx.
-function integrand(n) {
-  const body = n.body;
-  if (body?.type === 'mul' && body.right.type === 'sym' && /^d[a-zA-Z]$/.test(body.right.latex)) return { body: body.left, variable: body.right.latex[1] };
-  if (body?.type === 'sym' && /^d[a-zA-Z]$/.test(body.latex)) return { body: { type: 'num', value: '1' }, variable: body.latex[1] };
-  return no('The integral needs its dx at the end.');
-}
 const isAntiderivative = (n) => { n = unwrap(n); return n?.type === 'large' && n.latex === '\\int' && !n.sub && !n.sup; };
 
 // Every letter a piece of maths uses as a number (not e, not the functions written above, not
@@ -338,6 +98,14 @@ function letters(n, defs, out = new Set()) {
     try { bound = integrand(n).variable; } catch { /* said when it is worked out */ }
     for (const name of letters(n.body, defs)) if (name !== bound) out.add(name);
     letters(n.sub, defs, out); letters(n.sup, defs, out);
+    return out;
+  }
+  if (n.type === 'large' && (n.latex === '\\sum' || n.latex === '\\prod')) {
+    const start = unwrap(n.sub);
+    const counter = start?.type === 'rel' ? letterName(start.left) : null;
+    for (const name of letters(n.body, defs)) if (name !== counter) out.add(name);
+    if (start?.type === 'rel') letters(start.right, defs, out);
+    letters(n.sup, defs, out);
     return out;
   }
   if (n.type === 'prime') {
@@ -422,6 +190,9 @@ function readLine(source, defs, compileFunction) {
   const line = { continues: false, range: null, name: null, text };
   if (/^=/.test(text)) { line.continues = true; text = text.replace(/^=\s*/, ''); }
   if (!text) no('The line is empty.');
+  // \hat{x}, \vec{v}: read aloud by name, but never worked out (hat x is not h times a times t times x).
+  const unread = source.latex ? unreadCommands(source.latex) : [];
+  if (unread.length) no(`This line has \\${unread[0]} in it, which the check cannot work out.`);
   // A function in pieces: its value comes from the graph code, which already reads the cases.
   if (source.latex && /\\begin\{cases\}/.test(source.latex)) {
     if (!compileFunction) no('Functions written in pieces are not checked here.');
@@ -500,6 +271,14 @@ function definitions(context, compileFunction) {
     } catch { /* a line that cannot be read defines nothing */ }
   }
   return defs;
+}
+
+// The value of one piece of maths (no = in it) at the given letters: valueAt('x^2/2', { x: 3 })
+// is 4.5. For the tests, which compare every way of writing an equation with hand-worked values.
+export function valueAt(source, vars = {}) {
+  const line = readLine(typeof source === 'string' ? { plain: source, latex: null } : source, {}, null);
+  if (line.kind !== 'values' || line.values.length !== 1) no('This is not one piece of maths with a value.');
+  return value(line.values[0], { vars, defs: {}, pm: 1, main: 'x' });
 }
 
 // ---------- comparing values ----------
@@ -816,7 +595,8 @@ function check(current, previous, context, compileFunction) {
     line.name = null;
     if (!twoSigns) own = insideLine(line, range, defs);
   }
-  const isEquation = line.kind === 'solutions' || (own.result === 'different' && line.values.length === 2 && !line.name && !line.derivative);
+  // A line that starts with = is never an equation to solve: it says "equal to the line above".
+  const isEquation = line.kind === 'solutions' || (!line.continues && own.result === 'different' && line.values.length === 2 && !line.name && !line.derivative);
 
   // Two equations to solve, one under the other: the solutions decide.
   if (isEquation && aboveIsEquation) return compareSolutions(above, line, range, defs);
@@ -864,7 +644,10 @@ function check(current, previous, context, compileFunction) {
     return { verdict: ownWords ? 'same' : 'alone', message: ownWords ? `${ownWords}.${ownNote} There is no line above to compare with.` : 'There is no equation above this line to compare with.' };
   }
   if (line.kind === 'solutions') return { verdict: 'alone', message: 'This line is a list of answers and the line above is not an equation to solve, so they are not compared.' };
-  if (aboveIsEquation || above.kind !== 'values') {
+  if (line.continues && above.kind !== 'values') {
+    return { verdict: 'alone', message: `This line starts with =, but the line above is ${above.kind === 'inequality' ? 'an inequality' : 'a list of answers'}, so there is nothing for it to be equal to.` };
+  }
+  if ((aboveIsEquation && !line.continues) || above.kind !== 'values') {
     return { verdict: ownWords ? 'same' : 'alone', message: `${ownWords ? `${ownWords}.${ownNote} ` : ''}The line above is ${above.kind === 'inequality' ? 'an inequality' : 'an equation to solve'} and this line is not, so they are not compared.` };
   }
 
@@ -883,7 +666,7 @@ function check(current, previous, context, compileFunction) {
     const variable = line.name.variable || line.name.param || above.name?.param || (names.includes('x') ? 'x' : names.includes('t') ? 't' : names[0]);
     if (!variable) no('The line above has no letter to take the derivative with.');
     variables.add(variable);
-    fa = (s) => { s.measured = true; return slope((v) => value(from, { ...s, defs: defsAbove, vars: { ...s.vars, [variable]: v } }), s.vars[variable], order); };
+    fa = (s) => { s.measured = true; return slopeOf(from, variable, { ...s, defs: defsAbove }, order); };
     fb = (s) => value(to, s);
     measuredSlope = true;
   } else {
@@ -900,16 +683,16 @@ function check(current, previous, context, compileFunction) {
     if (out.result === 'same') return { verdict: 'same', message: `Right: this is the ${word} of the line above.${tail}` };
     return { verdict: 'different', message: `Not the ${word} of the line above. ${where(out.at)} the ${word} is ${spokenNumber(out.a)} and this line gives ${spokenNumber(out.b)}.` };
   }
-  if (out.result === 'same') return { verdict: 'same', message: `Same as the line above.${lostAndGained(out, 'the line above', 'this line')}${tail}` };
+  if (out.result === 'same') return { verdict: 'same', message: `${line.continues ? 'Equal to the line above.' : 'Same as the line above.'}${lostAndGained(out, 'the line above', 'this line')}${tail}` };
   if (ownWords) {
     // d/dx (x^3) = 3x^2 under x^3: the line does not repeat the line above, it takes its derivative.
     try {
       const names = [...variables].sort();
       const variable = names.includes('x') ? 'x' : names.includes('t') ? 't' : names[0];
-      const sloped = variable && compare((s) => { s.measured = true; return slope((v) => value(from, { ...s, defs: defsAbove, vars: { ...s.vars, [variable]: v } }), s.vars[variable]); },
+      const sloped = variable && compare((s) => { s.measured = true; return slopeOf(from, variable, { ...s, defs: defsAbove }); },
         (s) => value(to, s), variables, range, defs);
       if (sloped?.result === 'same') return { verdict: 'same', message: `Right: this is the derivative of the line above.${tail}` };
     } catch (error) { if (!(error instanceof Unsupported)) throw error; }
   }
-  return { verdict: 'different', message: `Not the same as the line above. ${where(out.at) || 'Here'} the line above is ${spokenNumber(out.a)} and this line is ${spokenNumber(out.b)}.${ownWords ? ` ${ownWords} with each other.` : ''}` };
+  return { verdict: 'different', message: `${line.continues ? 'Not equal to the line above' : 'Not the same as the line above'}. ${where(out.at) || 'Here'} the line above is ${spokenNumber(out.a)} and this line is ${spokenNumber(out.b)}.${ownWords ? ` ${ownWords} with each other.` : ''}` };
 }

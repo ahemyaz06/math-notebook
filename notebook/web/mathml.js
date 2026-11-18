@@ -105,6 +105,7 @@ const SYMBOLS = {
   '∝': '\\propto', '≪': '\\ll', '≫': '\\gg',
   '→': '\\to', '←': '\\leftarrow', '↔': '\\leftrightarrow', '⇒': '\\Rightarrow', '⇐': '\\Leftarrow',
   '⇔': '\\Leftrightarrow', '⟹': '\\implies', '⟺': '\\iff', '↦': '\\mapsto',
+  'ⅆ': 'd', 'ⅇ': 'e', 'ⅈ': 'i', // Word's own d of dx, e and i
   '∞': '\\infty', '∂': '\\partial', '∇': '\\nabla', '′': "'", '″': "''", '‴': "'''",
   '∈': '\\in', '∉': '\\notin', '∋': '\\ni', '⊂': '\\subset', '⊃': '\\supset', '⊆': '\\subseteq',
   '⊇': '\\supseteq', '∪': '\\cup', '∩': '\\cap', '∅': '\\emptyset', '∀': '\\forall', '∃': '\\exists',
