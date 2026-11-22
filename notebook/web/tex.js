@@ -4,7 +4,7 @@
 import { drawingsOf, drawnFunction } from './draw.js';
 import { latexToMathml } from './mathml.js';
 import { latexToPlain, parsePlain, plainToLatex } from './equation.js';
-import { makeGraph, compileFunction, studentGraph } from './graphs.js';
+import { axesOf, makeGraph, compileFunction, studentGraph } from './graphs.js';
 
 // ---------- reading groups ----------
 
@@ -1038,7 +1038,11 @@ export function graphFromPgfplots(code) {
 export function graphToPgfplots(graph) {
   const lines = [];
   const [x0, x1] = graph.span.x, [y0, y1] = graph.span.y;
-  lines.push('\\begin{tikzpicture}', '\\begin{axis}[', `  axis lines=middle, xlabel={$x$}, ylabel={$y$},`,
+  // The axes are named with the graph's letters (y and A for A = 1200 - 4y^2); each formula is
+  // written with x, the letter pgfplots varies.
+  let axes = { x: 'x', y: 'y' };
+  try { axes = axesOf((graph.functions || []).map((f) => compileFunction(f.latex, 'latex'))); } catch { /* x and y */ }
+  lines.push('\\begin{tikzpicture}', '\\begin{axis}[', `  axis lines=middle, xlabel={$${axes.x}$}, ylabel={$${axes.y}$},`,
     `  xmin=${x0}, xmax=${x1}, ymin=${y0}, ymax=${y1},`, '  samples=300, unbounded coords=jump, restrict y to domain=' + `${y0 - 10 * (y1 - y0)}:${y1 + 10 * (y1 - y0)}`, ']');
   for (const f of graph.functions || []) {
     const fn = compileFunction(f.latex, 'latex');

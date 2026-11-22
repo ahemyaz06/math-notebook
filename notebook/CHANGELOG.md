@@ -2,6 +2,77 @@
 
 Earlier versions are described on the [releases page](https://github.com/ahemyaz06/math-notebook/releases).
 
+## 0.8.2 (beta)
+
+### Graphs of other letters
+
+- A function can change any letter, not only x. The letter on its own goes up and the other one
+  goes across: A = 1200 - 4y^2 has y across and A up, x = 100 - 4y has y across and x up,
+  h(t) = -16t^2 + 64t has t across. Graph mode, the description and the graph's line use those
+  letters: "y 2, A 1184", "crosses the y-axis at y = 17.32". It can be written either way round
+  (1200 - 4y^2 = A), with an interval in the same letter (t in [0, 4], for 0 < y < 17.32), or in
+  pieces.
+- y = 100 - 4y is said to be an equation to solve (y is on both sides), with how to graph it
+  instead: x = 100 - 4y. Two letters that can both change (A = xy), or functions of different
+  letters on one graph, are said plainly too.
+- A new graph's window reaches zeros, peaks and valleys up to 100 away when there are only a few:
+  y = 100 - 4x shows x from minus 5 to 30, so its zero at 25 is on the graph.
+
+### The size of a graph you already have
+
+- In graph mode W makes the graph twice as wide and Shift+W half as wide. The menu has both, and
+  "Type the size of the graph" for exact numbers. A graph of equations fits its height to the
+  curves again; the document keeps the new size. A very wide graph gets longer steps (F offers
+  them), so it is not hundreds of key presses across.
+
+### A bigger graph, with its question on top
+
+- Graph mode's picture fills the window. Above it are the question the graph belongs to (the
+  nearest line with words above the graph) and the graph's equations drawn as maths, and each
+  axis has its letter at its end. Q reads the question aloud.
+
+### How the curve bends (B)
+
+- B in graph mode says whether the curve is concave up or down where you are, with the second
+  derivative's value, and lists the inflection points on the graph. The second derivative is worked
+  out by the rules of calculus, so it is exact: y = x^4 - 4x^3 has inflection points at 0, 0 and
+  2, minus 16. Corners and asymptotes where the bending changes are not inflection points; a
+  vertical tangent can be (y = cbrt(x) at 0). Also in the graph menu and Math > Graph. It works on
+  drawings too, exactly from the drawn parts, so a sketch can be checked: a drawn S whose middle is
+  -x^3 + 3x has its inflection point at 0, 0.
+- Inflection points are also stops for period and comma, and stepping onto one says it ("the
+  origin, 0, 0; inflection point at 0, 0" on y = x^3). They have no sound of their own, and the
+  graph's description does not list them (B does).
+
+### The normal line
+
+- Shift+T in graph mode (or the graph menu, or Math > Graph) adds the normal line where you are: at
+  a right angle to the tangent, with slope minus 1 over the tangent's. y = x^2 at x = 1 gives
+  y = minus 0.5x plus 1.5, which crosses the parabola again at minus 1.5, 2.25 (a point of
+  interest). A flat tangent's normal is vertical, so it is said and not added; a vertical
+  tangent's normal is flat (y = cbrt(x) at 0 gives y = 0). Backspace takes it back like the other lines.
+- E in graph mode writes a tangent, normal or secant line in the document, under the graph, as words
+  and an equation: "Normal line to y = x^2 at x = 3: y = -(1/6)x + 19/2".
+  Fractions stay fractions (up to 100 below the line); other numbers are written to four decimals
+  and said to be rounded.
+
+### Fixed
+
+- A function on an interval far from 0 lost the dot at its far end: y = x on [0, 100] had a solid
+  dot at 0 only, and a jump at x = 100 in a function in pieces was not heard as a jump. Both ends
+  now have their dots, at any size of number.
+- The window of a function on an interval no longer adds half the graph again when it rounds its
+  ends: V = x(20 - 2x)^2 on [0, 10] is shown from minus 0.5 to 11 (it was to 15), y = x on
+  [90, 100] from 89 to 101 (it was 85 to 150).
+- y = sin x on [0, 2pi] said its end dot was at "minus 2.4 times 10 to the minus 16"; it is 0.
+- x^2 = y was named "y = x^2 = y"; it is y = x^2.
+
+### Not tried yet
+
+- Everything above was checked by the automatic tests, which drive the real app with key presses,
+  and every new number against maths worked out by hand. The new keys (B, Shift+T, E, W, Q) and
+  the bigger graph mode have not yet been used with NVDA by a person.
+
 ## 0.8.1 (beta)
 
 ### An Import menu

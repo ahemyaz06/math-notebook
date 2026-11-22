@@ -1,4 +1,4 @@
-MATH NOTEBOOK 0.8.1 BETA (portable)
+MATH NOTEBOOK 0.8.2 BETA (portable)
 
 A document editor for maths that works like Word and reads well with NVDA and MathCAT.
 Nothing to install, and no AI: everything is done by exact rules on this computer.
@@ -18,7 +18,7 @@ START HERE
 5. Press Ctrl+S to save, or Ctrl+Shift+W to make a Word file to hand in.
 6. Help > Sound guide and lessons teaches the graph sounds, one idea at a time.
 
-F1 lists every key. Press Alt for the menus: File, Edit, Insert, Format, Math, Tools, Help.
+F1 lists every key. Press Alt for the menus: File, Edit, Insert, Import, Format, Math, Tools, Help.
 Settings is in Help (Ctrl+comma). F6 goes between the small toolbar and the document.
 
 
@@ -72,14 +72,19 @@ GRAPHS BY SOUND
 Enter on a graph line, or Ctrl+G on an equation, opens graph mode.
 J and K          step along the curve
 Space            play it; Space again stops
-Period, comma    next and previous point of interest (zeros, peaks, holes, crossings)
+Period, comma    next and previous point of interest (zeros, peaks, holes, inflection points, crossings)
 S, L             the slope here; the limits from the left and the right
+B                concave up or down here, and the inflection points
 I, V             describe the graph; read the point
 N                the lowest and highest note of this graph
 Tab              next function (each has its own sound)
 D                a soft second note for the slope after each step
 Ctrl+Enter, or M a menu of everything you can do here, each item with its key
 T                the tangent line where you are (a secant line is in the menu)
+Shift+T          the normal line where you are, at a right angle to the tangent
+E                write that line's equation in your document, under the graph
+W, Shift+W       make the graph twice as wide, or half as wide
+Q                read the question above the graph
 Backspace        take back the last thing you did (also while drawing)
 F1 or ?          every graph key
 Escape           back to the document

@@ -38,7 +38,8 @@
 
 <section id="graph-mode" class="graph-mode" tabindex="0" role="application" aria-label="Graph mode. F1 for keys, Escape to return." hidden>
   <div class="graph-head" aria-hidden="true">
-    <h2>Graph mode</h2>
+    <p id="graph-question" class="graph-question" hidden></p>
+    <h2 id="graph-mode-title">Graph mode</h2>
     <p id="graph-reading"></p>
   </div>
   <svg aria-hidden="true"></svg>
@@ -124,7 +125,7 @@
 <dialog id="graph-dialog" aria-labelledby="graph-title">
   <h2 id="graph-title">Graph from equations</h2>
   <form method="dialog" id="graph-form">
-    <label for="graph-text">Functions of x, one per line</label>
+    <label for="graph-text">Functions, one per line (of x, or of another letter, such as A = 1200 - 4y^2)</label>
     <textarea id="graph-text" rows="4" spellcheck="false"></textarea>
     <label for="graph-range">x from and to</label>
     <input id="graph-range" autocomplete="off">
@@ -138,7 +139,8 @@
     <template class="dialog-help"><p>Write each function of x on its own line, in plain text or LaTeX, for example x^2 - 4 or \frac{1}{x}.
         A piecewise function is written as \begin{cases} ... \end{cases}. pgfplots code from a .tex file works too.</p>
       <p>A function can have its own interval: sin x, [0, 2pi], or tan x on (-pi/2, pi/2). Anything after # or // on a line is a comment and is not graphed.</p>
-      <p>x from and to: for example -5, 5. Left empty, the range is chosen to show every hole and jump, or to fit the functions' intervals.
+      <p>Other letters work too. The letter on its own goes up and the other letter goes across: A = 1200 - 4y^2 has y across and A up; x = 100 - 4y has y across and x up; h(t) = -16t^2 + 64t has t across. The graph then says those letters instead of x and y. All the functions on one graph use the same letter across.</p>
+      <p>x from and to: for example -5, 5 (for A = 1200 - 4y^2 this is y from and to). Left empty, the range is chosen to show every hole and jump, the zeros, peaks and valleys up to 100 away, or the functions' intervals. In graph mode W makes a graph twice as wide and Shift+W half as wide.
         y from and to: left empty, it fits the graph.</p>
       <p>Ctrl+Enter inserts the graph. Escape cancels. On an equation in the document, Ctrl+G graphs it directly.</p></template>
   </form>

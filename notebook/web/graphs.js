@@ -103,17 +103,115 @@ function graphText(n) {
   }
 }
 
-// "y = ...", "f(x) = ..." or just the right-hand side.
+// ---------- the letter that goes across, and the one that goes up ----------
+// A function may vary any letter: y = x^2 (x across, y up), A = 1200 - 4y^2 (y across, A up),
+// x = 100 - 4y (y across, x up), h(t) = -16t^2 + 64t (t across, y up). Inside, the letter that
+// goes across is always called x, so the maths (values, limits, slopes, derivatives) is the same
+// as for x; only the words use the letters as written (axisWords).
+
+// The letters a formula varies (e is the number e, not a letter).
+function lettersOf(n, out = new Set()) {
+  if (!n || typeof n !== 'object') return out;
+  if (Array.isArray(n)) { for (const m of n) lettersOf(m, out); return out; }
+  if (n.type === 'var' && n.name !== 'e') out.add(n.name);
+  for (const v of Object.values(n)) if (v && typeof v === 'object') lettersOf(v, out);
+  return out;
+}
+// The formula with its letter called x.
+function asX(n, letter) {
+  if (!n || typeof n !== 'object' || !letter || letter === 'x') return n;
+  if (Array.isArray(n)) return n.map((m) => asX(m, letter));
+  if (n.type === 'var' && n.name === letter) return { ...n, name: 'x' };
+  return Object.fromEntries(Object.entries(n).map(([k, v]) => [k, v && typeof v === 'object' ? asX(v, letter) : v]));
+}
+const isLetter = (n) => n?.type === 'var' && n.name !== 'e';
+// f(x), h(t), A(y): a function's name with the letter it varies.
+const isCall = (n) => n?.type === 'mul' && isLetter(n.left) && n.right?.type === 'paren' && isLetter(n.right.inner);
+const andList = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
+// The name of the height: A in A = ..., y for y = ... and for f(x), h(t); the function's own
+// letter when it varies y (A in A(y) = ...), as y cannot go both across and up.
+function heightName(nameNode, variable) {
+  if (isLetter(nameNode)) return nameNode.name;
+  if (isCall(nameNode)) return variable === 'y' ? nameNode.left.name : 'y';
+  return variable === 'y' ? 'f' : 'y';
+}
+
+// A function's name (null: none written), its formula with the letter as x (body), the letter as
+// written (variable; null for a number alone, which suits any letter) and the height's name.
+function lettered(nameNode, formula) {
+  // Two things at once (y = x, (1, 2)) are said as before: one function per line.
+  if (formula.type === 'list') graphText(formula);
+  const letters = [...lettersOf(formula)];
+  const own = isLetter(nameNode) ? nameNode.name : null;
+  if (own && letters.includes(own)) {
+    const other = own === 'x' ? 'y' : 'x';
+    throw new Error(`${own} is on both sides of the =, so this is an equation to solve, not a function to graph. Write ${own} on one side only. To graph the other side as ${own} changes, give the height another letter, such as ${other} = ... (then ${own} goes across and ${other} goes up).`);
+  }
+  let variable;
+  if (isCall(nameNode)) {
+    variable = nameNode.right.inner.name;
+    const stray = letters.find((l) => l !== variable);
+    if (stray) throw new Error(`The letter ${stray} has no value; a graph can only vary ${variable}. Write the number instead.`);
+  } else if (letters.length > 1) {
+    // (With x among them, the words are as they always were.)
+    if (letters.includes('x')) throw new Error(`The letter ${letters.find((l) => l !== 'x')} has no value; a graph can only vary x. Write the number instead.`);
+    throw new Error(`This has the letters ${andList(letters)}, and a graph can vary only one of them. Write numbers for the others.`);
+  } else variable = letters[0] || null;
+  const name = isCall(nameNode) ? `${nameNode.left.name}(${variable})` : own || (variable === 'y' ? 'f(y)' : null);
+  return { name, body: asX(formula, variable), variable, output: heightName(nameNode, variable) };
+}
+
+// "y = ...", "f(x) = ...", "A = ...", "h(t) = ...", "1200 - 4y^2 = A", or just the right-hand side.
 function functionSide(ast) {
-  if (ast.type !== 'rel') return { name: null, body: ast };
+  if (ast.type !== 'rel') return lettered(null, ast);
   if (ast.op !== '=') throw new Error('An inequality cannot be graphed yet; write a function such as y = x^2.');
-  const isName = (n) => n.type === 'var' && n.name === 'y'
-    || (n.type === 'mul' && n.left.type === 'var' && n.right.type === 'paren' && n.right.inner.type === 'var' && n.right.inner.name === 'x');
-  if (isName(ast.left) && ast.right.type !== 'rel') return { name: ast.left.type === 'var' ? 'y' : `${ast.left.left.name}(x)`, body: ast.right };
-  if (isName(ast.right) && ast.left.type !== 'rel') return { name: ast.right.type === 'var' ? 'y' : `${ast.right.left.name}(x)`, body: ast.left };
+  // y and f(x) first, as always: x = y is y = x.
+  const isName = (n) => (n.type === 'var' && n.name === 'y') || (isCall(n) && n.right.inner.name === 'x');
+  if (isName(ast.left) && ast.right.type !== 'rel') return lettered(ast.left, ast.right);
+  if (isName(ast.right) && ast.left.type !== 'rel') return lettered(ast.right, ast.left);
   const isX = (n) => n.type === 'var' && n.name === 'x';
-  if (isX(ast.left) !== isX(ast.right) && !/"name":"[xy]"/.test(JSON.stringify(isX(ast.left) ? ast.right : ast.left))) throw new Error('A vertical line (x = 2) cannot be graphed yet; graphs are of functions, y = ...');
+  if (isX(ast.left) !== isX(ast.right) && !lettersOf(isX(ast.left) ? ast.right : ast.left).size) throw new Error('A vertical line (x = 2) cannot be graphed yet; graphs are of functions, y = ...');
+  // Any other letter or name on one side: A = 1200 - 4y^2, x = 100 - 4y, h(t) = ...
+  const isAnyName = (n) => isLetter(n) || isCall(n);
+  if (isAnyName(ast.left) && ast.right.type !== 'rel') return lettered(ast.left, ast.right);
+  if (isAnyName(ast.right) && ast.left.type !== 'rel') return lettered(ast.right, ast.left);
   throw new Error('Write the function as y = ... or f(x) = ... so it is clear what to graph.');
+}
+
+// The formula as written without its name: "1200 - 4y^2" from "A = 1200 - 4y^2" or "1200 - 4y^2 = A".
+function withoutName(plain, name) {
+  const usual = plain.replace(/^\s*(y|[a-z]\(x\))\s*=\s*/i, '');
+  if (usual !== plain || !name) return usual;
+  const n = name.replace(/[()]/g, '\\$&');
+  return plain.replace(new RegExp(`^\\s*${n}\\s*=\\s*`), '').replace(new RegExp(`\\s*=\\s*${n}\\s*$`), '');
+}
+
+// The letters of a graph: { x: the one going across, y: the one going up }. One graph has one
+// letter across, so functions that vary different letters cannot share it.
+export function axesOf(functions) {
+  const across = [...new Set(functions.map((f) => f.variable).filter(Boolean))];
+  if (across.length > 1) throw new Error(`These functions vary different letters (${andList(across)}), and a graph has one letter going across. Graph them separately, or write them all with the same letter.`);
+  const x = across[0] || 'x';
+  const clash = functions.find((f) => (f.output || 'y') === x);
+  if (clash) throw new Error(`${clash.label} would be a vertical line here, because ${x} goes across this graph. Write each function with ${x} as the letter it varies.`);
+  const ups = [...new Set(functions.map((f) => f.output || 'y'))];
+  return { x, y: ups.length === 1 || x === 'y' ? ups[0] || 'y' : 'y' };
+}
+export const usualAxes = (axes) => !axes || (axes.x === 'x' && axes.y === 'y');
+
+// Words written for x across and y up, in the graph's own letters: for A = 1200 - 4y^2, "crosses
+// the x-axis at x = 17.32" is "crosses the y-axis at y = 17.32", and "x 2, y 1184" is "y 2,
+// A 1184". keep: text that stays as written (the formulas themselves, the question).
+export function axisWords(text, axes, keep = []) {
+  if (usualAxes(axes) || !text) return text;
+  const kept = [];
+  let out = String(text);
+  for (const k of [...new Set(keep.filter(Boolean))].sort((a, b) => b.length - a.length)) {
+    if (out.includes(k)) out = out.split(k).join(`\u0001${kept.push(k) - 1}\u0002`);
+  }
+  out = out.replace(/(?<![A-Za-z])[xy](?![A-Za-z])/g, (m) => (m === 'x' ? axes.x : axes.y));
+  return out.replace(/\u0001(\d+)\u0002/g, (_, i) => kept[Number(i)]);
 }
 
 function constantValue(ast) {
@@ -136,7 +234,9 @@ function comparisons(ast, out = []) {
 
 const FLIP = { '<': '>', '>': '<', '<=': '>=', '>=': '<=', '=': '=', '!=': '!=' };
 
-export function parseCondition(text) {
+// variable: the letter the function varies (t for h(t)); x is always read as that letter too,
+// since an interval [0, 2] is written as comparisons of x.
+export function parseCondition(text, variable = 'x') {
   let words = text.replace(/\b(if|for|when|where)\b/gi, ' ').replace(/\s+/g, ' ').trim();
   // x in [0, 2pi), and {0 < x < 1} with its braces.
   words = words.replace(/^\{(.*)\}$/, '$1').trim();
@@ -147,9 +247,10 @@ export function parseCondition(text) {
   const parts = words.split(/\band\b|[,;]/i).map((p) => p.trim()).filter(Boolean);
   for (const [left, rawOp, right] of parts.flatMap((p) => comparisons(parsePlain(p)))) {
     let op = rawOp, other;
-    if (left.type === 'var' && left.name === 'x') other = right;
-    else if (right.type === 'var' && right.name === 'x') { other = left; op = FLIP[op]; }
-    else throw new Error(`The condition "${words}" does not compare x with a number.`);
+    const isVar = (n) => n.type === 'var' && (n.name === 'x' || n.name === variable);
+    if (isVar(left)) other = right;
+    else if (isVar(right)) { other = left; op = FLIP[op]; }
+    else throw new Error(`The condition "${words}" does not compare ${variable || 'x'} with a number.`);
     const v = constantValue(other);
     if (op === '<' || op === '<=') { if (v < range.hi || (v === range.hi && op === '<')) { range.hi = v; range.hiClosed = op === '<='; } }
     else if (op === '>' || op === '>=') { if (v > range.lo || (v === range.lo && op === '>')) { range.lo = v; range.loClosed = op === '>='; } }
@@ -208,36 +309,61 @@ export function compileFunction(source, format = /\\|[_^]\{/.test(source) ? 'lat
   if (cases) return piecewise(cases, latex);
   // "y = sin x, [0, 2pi]", "y = sin x on [0, 2pi)", "y = x^2 for 0 < x < 1": a function with
   // its interval is one row with a condition.
-  const domain = splitDomain(latexToPlain(latex));
+  const plain = latexToPlain(latex);
+  const domain = splitDomain(plain);
   if (domain) {
-    return piecewise({ name: functionSide(parsePlain(domain.main)).name, rows: [[plainToLatex(domain.main.replace(/^[^=]*=/, '')), domain.condition]] }, latex);
+    const side = functionSide(parsePlain(domain.main));
+    return piecewise({ name: side.name, variable: side.variable, output: side.output, rows: [[plainToLatex(withoutName(domain.main, side.name)), domain.condition]] }, latex);
   }
   // "y = ln(csc x), 0 < x < pi/2": the same, with the comparisons after a comma.
-  const parsed = parsePlain(latexToPlain(latex));
+  const parsed = parsePlain(plain);
   if (parsed.type === 'list' && parsed.items.length >= 2 && parsed.items.slice(1).every(isInequality)) {
-    const [first, ...conditions] = latexToPlain(latex).split(',');
-    return piecewise({ name: functionSide(parsePlain(first)).name, rows: [[plainToLatex(first.replace(/^[^=]*=/, '')), conditions.join(' and ')]] }, latex);
+    const [first, ...conditions] = plain.split(',');
+    const side = functionSide(parsePlain(first));
+    return piecewise({ name: side.name, variable: side.variable, output: side.output, rows: [[plainToLatex(withoutName(first, side.name)), conditions.join(' and ')]] }, latex);
   }
-  const { name, body } = functionSide(parsed);
+  const { name, body, variable, output } = functionSide(parsed);
   const text = graphText(body);
   const graph = graphOf(body);
-  const spoken = latexToPlain(plainToLatex(latexToPlain(latex).replace(/^\s*(y|[a-z]\(x\))\s*=\s*/i, '')));
+  const spoken = latexToPlain(plainToLatex(withoutName(plain, name)));
   graph.label = `${name || 'y'} = ${spoken}`;
   // rows: the formula (Sound Lab's syntax) and where it applies, for writing pgfplots code.
   return { graph, label: graph.label, latex, dots: [], notes: [], rows: [{ text, intervals: [[-Infinity, Infinity]] }],
-    parts: [{ ast: body, range: { otherwise: true } }] }; // the formula as read, for its derivative
+    parts: [{ ast: body, range: { otherwise: true } }], // the formula as read, for its derivative
+    variable, output };
 }
 
-function piecewise({ name, rows }, latex) {
+// The rows' function name ("f(x)", "A", or none) as the node functionSide reads.
+function nameNodeOf(name) {
+  const m = /^\s*([A-Za-z])\s*(?:\(\s*([A-Za-z])\s*\))?\s*$/.exec(name || '');
+  if (!m || m[1] === 'e') return null;
+  const letter = { type: 'var', name: m[1] };
+  return m[2] ? { type: 'mul', left: letter, right: { type: 'paren', inner: { type: 'var', name: m[2] } } } : letter;
+}
+
+function piecewise({ name, rows, variable: given, output: givenOutput }, latex) {
   if (!rows.length) throw new Error('The cases have no rows.');
+  const read = rows.map(([expr], i) => {
+    try { return functionSide(parsePlain(latexToPlain(expr))); } catch (error) { throw new Error(`Row ${i + 1} (${latexToPlain(expr)}): ${error.message}`); }
+  });
+  // The letter: the one in the name (h(t)), or the one the rows vary; every row the same.
+  const nameNode = nameNodeOf(name);
+  const letters = [...new Set([given, isCall(nameNode) ? nameNode.right.inner.name : null, ...read.map((r) => r.variable)].filter(Boolean))];
+  if (letters.length > 1) throw new Error(`The rows vary different letters (${andList(letters)}); a function in pieces varies one.`);
+  const variable = letters[0] || null;
+  if (isLetter(nameNode) && nameNode.name === variable) throw new Error(`${variable} is on both sides of the =, so this is not a function to graph.`);
   const pieces = rows.map(([expr, cond], i) => {
-    let fn, text, ast;
-    try { ast = functionSide(parsePlain(latexToPlain(expr))).body; text = graphText(ast); fn = graphOf(ast); } catch (error) { throw new Error(`Row ${i + 1} (${latexToPlain(expr)}): ${error.message}`); }
+    let fn, text;
+    const ast = read[i].body;
+    try { text = graphText(ast); fn = graphOf(ast); } catch (error) { throw new Error(`Row ${i + 1} (${latexToPlain(expr)}): ${error.message}`); }
     let range;
-    try { range = parseCondition(latexToPlain(cond)); } catch (error) { throw new Error(`Row ${i + 1}, condition "${latexToPlain(cond)}": ${error.message}`); }
-    return { fn, text, ast, range, expr: latexToPlain(expr), cond: range.otherwise ? 'otherwise' : latexToPlain(cond).replace(/\b(if|for|when)\b/gi, '').trim() };
+    try { range = parseCondition(latexToPlain(cond), variable || 'x'); } catch (error) { throw new Error(`Row ${i + 1}, condition "${latexToPlain(cond)}": ${error.message}`); }
+    // (An interval's comparisons are written with x; for h(t) they are said with t.)
+    const said = latexToPlain(cond).replace(/\b(if|for|when)\b/gi, '').trim();
+    return { fn, text, ast, range, expr: latexToPlain(expr), cond: range.otherwise ? 'otherwise' : variable && variable !== 'x' ? said.replace(/(?<![A-Za-z])x(?![A-Za-z])/g, variable) : said };
   });
   const single = rows.length === 1 && !pieces[0].range.otherwise;
+  const named = /^([a-z]\([a-z]\)|[a-z])$/i.test(name || '');
   // The first row whose condition holds decides, as when reading the cases top to bottom.
   const pieceAt = rowAt(pieces);
   const valueOf = (p, x) => (p ? p.fn.limitAt(x) : { defined: false, hole: false, y: NaN });
@@ -247,8 +373,8 @@ function piecewise({ name, rows }, latex) {
     // f(x), or the maths before the brace as words (|x|, for "sqrt(x^2) = |x| = cases").
     label: single
       // One formula on an interval is not piecewise: y = sin x (for 0 <= x <= 2 pi).
-      ? `${/^([a-z]\(x\)|y)$/i.test(name) ? name : 'y'} = ${pieces[0].expr}`
-      : `${/^([a-z]\(x\)|y)$/i.test(name) ? name : name ? latexToPlain(name.split('=').at(-1)) : 'f(x)'}, piecewise`,
+      ? `${named ? name : variable === 'y' ? 'f(y)' : 'y'} = ${pieces[0].expr}`
+      : `${named ? name : name ? latexToPlain(name.split('=').at(-1)) : `f(${variable || 'x'})`}, piecewise`,
     hasSteps: false,
     yAt: (x) => { const l = valueOf(pieceAt(x), x); return l.defined ? l.y : NaN; },
     limitAt(x) {
@@ -272,7 +398,8 @@ function piecewise({ name, rows }, latex) {
   return { graph, label: graph.label, latex, dots: piecewiseDots(pieces, pieceAt), notes: single ? [`for ${pieces[0].cond}`] : pieces.map((p) => `${p.expr} when ${p.cond}`),
     domain: single ? [pieces[0].range.lo, pieces[0].range.hi] : null,
     rows: pieces.map((p, i) => ({ text: p.text, intervals: rowIntervals(p, pieces.slice(0, i)) })),
-    parts: pieces.map((p) => ({ ast: p.ast, range: p.range })) };
+    parts: pieces.map((p) => ({ ast: p.ast, range: p.range })),
+    variable, output: givenOutput || heightName(nameNode, variable) };
 }
 
 // The row in use at x: the first whose condition holds, as when reading the cases top to bottom.
@@ -299,9 +426,13 @@ function piecewiseDots(pieces, pieceAt) {
   }
   const dots = [];
   for (const b of [...ends].sort((a, c) => a - c)) {
-    const eps = 1e-7;
+    // A step to each side that is never "the same x" as b (near() allows 1e-9 times the size):
+    // a fixed 1e-7 was, from about x = 99 on, so [0, 100] lost its dot at 100.
+    const eps = 1e-7 * (1 + Math.abs(b));
     const owner = pieceAt(b);
-    const at = owner ? owner.fn.limitAt(b) : { defined: false };
+    const own = owner ? owner.fn.limitAt(b) : { defined: false };
+    // sin x at 2 pi is 0, not the computer's minus 2.4 times 10 to the minus 16.
+    const at = own.defined && Math.abs(own.y) < 1e-12 ? { ...own, y: 0 } : own;
     // The height each side's row reaches at b is its own formula's value (or limit) at b,
     // even where b itself belongs to another row.
     const sides = [pieceAt(b - eps), pieceAt(b + eps)].map((p) => {
@@ -322,7 +453,7 @@ function piecewiseDots(pieces, pieceAt) {
   // height but the function's value there is missing or elsewhere.
   for (const b of new Set(dots.map((d) => d.coordinate[0]))) {
     const here = dots.filter((d) => d.coordinate[0] === b);
-    const eps = 1e-7;
+    const eps = 1e-7 * (1 + Math.abs(b));
     const sides = [pieceAt(b - eps), pieceAt(b + eps)].map((p) => (p ? p.fn.limitAt(b) : { defined: false }))
       .filter((l) => l.defined || l.hole).map((l) => l.y);
     const jump = sides.length === 2 && Math.abs(sides[0] - sides[1]) >= 1e-4 * (1 + Math.abs(sides[0]));
@@ -343,6 +474,8 @@ const nice = (v, up) => {
   return Number(((up ? Math.ceil(v / step) : Math.floor(v / step)) * step).toPrecision(12)); // -7 * 0.05 is -0.35, not -0.35000000000000003
 };
 
+const FAR = 100;
+const FAR_KINDS = ['x-axis', 'origin', 'maximum', 'minimum'];
 export function chooseXRange(functions) {
   // Wide enough for every dot, hole and asymptote, with room on both sides.
   const xs = [-5, 5];
@@ -352,13 +485,29 @@ export function chooseXRange(functions) {
     // Asymptotes that repeat (tan x, sec x) do not widen the window: a few periods show the pattern.
     for (const l of marks.length > 4 ? marks.filter((m) => Math.abs(m.x) <= 5) : marks) xs.push(l.x);
   }
+  // Zeros, peaks and valleys a little way off widen it to show them (y = 100 - 4x is 0 at 25;
+  // A = 1200 - 4y^2 at 17.32 and minus 17.32), when there are only a few: sin x has zeros all
+  // the way along, and a few periods show its pattern.
+  for (const f of functions) {
+    const far = landmarksOf(f.graph, FAR).filter((l) => FAR_KINDS.includes(l.kind) && Math.abs(l.x) > 5 && Math.abs(l.x) <= FAR);
+    if (far.length <= 4) for (const l of far) xs.push(l.x);
+  }
   // Every function on its own interval (y = sin x, [0, 2pi]): the window is those intervals with
   // a little room around them, not -5 to 5.
   const domains = functions.map((f) => f.domain);
   if (domains.every((d) => d && Number.isFinite(d[0]) && Number.isFinite(d[1]))) {
     const a = Math.min(...domains.map((d) => d[0])), b = Math.max(...domains.map((d) => d[1]));
     const room = Math.max((b - a) * 0.05, 0.1);
-    return [nice(a - room, false), nice(b + room, true)];
+    // Rounding by the size of the number alone can add half the graph again: [0, 10] became
+    // -0.5 to 15. Where it adds more than a fifth of the interval, round to a tenth of a power
+    // of ten of the interval's width instead ([0, 10] is -0.5 to 11).
+    const width = b - a, fine = 10 ** Math.floor(Math.log10(width + 2 * room)) / 10;
+    const end = (v, up, edge) => {
+      const r = nice(v, up);
+      if (Math.abs(r - edge) <= 0.2 * width) return r;
+      return Number(((up ? Math.ceil(v / fine) : Math.floor(v / fine)) * fine).toPrecision(12));
+    };
+    return [end(a - room, false, a), end(b + room, true, b)];
   }
   const lo = Math.min(...xs), hi = Math.max(...xs);
   const pad = Math.max(1, (hi - lo) * 0.15);
@@ -1032,13 +1181,15 @@ function studentCopy(graph) {
   const span = graph.span;
   const sources = [...(graph.functions || []).map((f) => ({ text: f.latex, format: 'latex' })), ...(graph.equations || [])];
   const functions = sources.map((s) => compileFunction(s.text ?? s, s.format));
+  let axes = null;
+  try { axes = axesOf(functions); } catch { /* the usual letters */ }
   const words = functions.map((f, i) => {
-    const parts = describeFunction(f, span.x, opts.drawn ? [...hide, 'beyond'] : hide);
+    const parts = describeFunction(f, span.x, opts.drawn ? [...hide, 'beyond'] : hide).map((w) => axisWords(w, axes));
     // opts.names: what the page calls each curve (f(x) and g(x) in a TikZ drawing with labels).
     const name = opts.hideFormula ? (opts.names?.[i] || (functions.length > 1 ? `Function ${i + 1}` : 'The function')) : f.label;
     return `${name}${parts.length ? `: ${parts.join('; ')}` : ''}`;
   });
-  const shown = `Shown for x from ${say(span.x[0])} to ${say(span.x[1])} and y from ${say(span.y[0])} to ${say(span.y[1])}.`;
+  const shown = axisWords(`Shown for x from ${say(span.x[0])} to ${say(span.x[1])} and y from ${say(span.y[0])} to ${say(span.y[1])}.`, axes);
   // opts.note: why the formula is left out (a worksheet drawing shows only the curve).
   const task = opts.hideFormula ? ` ${opts.note || 'Its formula is for you to find.'}` : '';
   const out = {
@@ -1102,14 +1253,15 @@ export function makeGraph(sources, range = {}) {
 
 function makeGraphNow(sources, { x = null, y = null } = {}) {
   const functions = sources.map((s) => compileFunction(s.text ?? s, s.format));
+  const axes = axesOf(functions); // A = 1200 - 4y^2: y across, A up
   const xRange = x || chooseXRange(functions);
   const yRange = y || fitYRange(functions, xRange);
   const pieces = functions.map((f) => {
-    const words = describeFunction(f, xRange);
+    const words = describeFunction(f, xRange).map((w) => axisWords(w, axes));
     return `${f.label}${f.notes.length ? ` (${f.notes.join('; ')})` : ''}${words.length ? `: ${words.join('; ')}` : ''}`;
   });
   return {
-    summary: `${pieces.join('. ')}. Shown for x from ${say(xRange[0])} to ${say(xRange[1])} and y from ${say(yRange[0])} to ${say(yRange[1])}.`,
+    summary: `${pieces.join('. ')}. Shown for ${axes.x} from ${say(xRange[0])} to ${say(xRange[1])} and ${axes.y} from ${say(yRange[0])} to ${say(yRange[1])}.`,
     span: { x: xRange, y: yRange },
     functions: functions.map((f) => ({ latex: f.latex })),
     points: functions.flatMap((f, i) => f.dots.map((d) => ({ ...d, function: i }))), // which function's end each dot is

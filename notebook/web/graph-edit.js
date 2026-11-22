@@ -4,7 +4,7 @@
 // named, so nothing has to be learned by heart. The maths is in draw.js; this is the keys,
 // the words and the picture.
 import { formatNumber } from '/sound/graph-math.js';
-import { compileFunction, exactly, say } from './graphs.js';
+import { axesOf, compileFunction, exactly, say } from './graphs.js';
 import { latexToPlain } from './equation.js';
 import { addPoint, connect, deletePoint, drawingsOf, drawnFunction, movePoint, nextName, numbersIn, pointAt, setNumber, startPiece, toggleOpen, toggleSmooth } from './draw.js';
 
@@ -202,7 +202,8 @@ export class GraphEditor {
     const mode = this.mode;
     // A graph read from a page keeps the words it came with, next to what is drawn on it.
     if (mode.graph.read === undefined && mode.functions.some((f) => !f.compiled && !f.dots)) mode.graph.read = mode.graph.summary || '';
-    mode.graph.summary = exactly(() => (mode.graph.asEquation ? this.equationWords() : mode.description()));
+    // (In the graph's own letters: y across and A up for A = 1200 - 4y^2.)
+    mode.graph.summary = mode.words(exactly(() => (mode.graph.asEquation ? this.equationWords() : mode.description())));
     mode.onChange?.(mode.graph);
   }
 
@@ -505,10 +506,13 @@ export class GraphEditor {
 
   askEquation(i = null) {
     const old = i === null ? '' : latexToPlain(this.equations()[i].latex);
-    this.ask(i === null ? 'Add an equation' : 'Change the equation', 'A function of x, such as y = x^2 - 3 or sin(2x)', old, (text) => {
+    this.ask(i === null ? 'Add an equation' : 'Change the equation', 'A function, such as y = x^2 - 3, sin(2x), or A = 1200 - 4y^2 (y across)', old, (text) => {
       if (!text) return 'Write a function of x.';
       let f;
       try { f = compileFunction(text); } catch (error) { return error.message; }
+      // One letter goes across a graph: A = 1200 - 4y^2 and y = x^2 cannot share one.
+      const others = this.mode.functions.filter((g) => g.compiled && !g.derived && g.source !== i).map((g) => g.compiled);
+      try { axesOf([...others, f]); } catch (error) { return error.message; }
       const list = [...this.equations()];
       if (i === null) list.push({ latex: f.latex }); else list[i] = { ...list[i], latex: f.latex };
       const at = i === null ? list.length - 1 : i;

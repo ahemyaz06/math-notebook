@@ -223,9 +223,25 @@ AI. The Word equations were checked against Microsoft's own converter in Word on
 - To draw your own: Ctrl+Shift+G (Insert > Graph to draw on, or Draw on the toolbar) makes an empty
   graph from minus 5 to 5 and opens it ready to draw on. See "Drawing a graph" below.
 
-The window is chosen for you: it covers every hole and jump, and the height fits the curve. A
-function with an interval is drawn only there, with a solid dot at an end it keeps and an open
-dot at an end it leaves out, and the window fits the interval.
+Any letter can be the one that changes, not only x. The letter on its own side of the = goes up,
+and the other letter goes across:
+
+- A = 1200 - 4y^2: y goes across, A goes up. You hear "y 2, A 1184", and "crosses the y-axis at
+  y = 17.32" where A is 0.
+- x = 100 - 4y: x as a function of y. y goes across and x goes up, the other way round from usual.
+- h(t) = -16t^2 + 64t: t goes across, y goes up. A(y) = 100y - 4y^2: y across, A up.
+- It can be written either way round: 1200 - 4y^2 = A is the same as A = 1200 - 4y^2.
+- An interval or pieces use the same letter: A = 1200 - 4y^2, [0, 17.32], or for 0 < y < 17.32, or
+  t in [0, 4].
+- y = 100 - 4y has y on both sides, so it is an equation to solve, not a graph; the notebook says
+  so. To graph 100 - 4y as y changes, give the height another letter: x = 100 - 4y.
+- All the functions on one graph share the letter that goes across.
+
+The window is chosen for you: it covers every hole and jump, the zeros, peaks and valleys up to
+100 away (y = 100 - 4x shows x from minus 5 to 30, to reach its zero at 25), and the height fits
+the curve. A function with an interval is drawn only there, with a solid dot at an end it keeps
+and an open dot at an end it leaves out, and the window fits the interval. In graph mode, W makes
+the graph wider (see "The size of the graph" below).
 
 The graph line in the document describes the graph in the course's words: where it crosses the
 axes, its peaks and valleys, holes, vertical asymptotes, and for piecewise functions each piece
@@ -257,9 +273,11 @@ Moving along the curve:
 - J and K: step back and forward along the curve. The point is read when you stop.
 - Space: play the curve from where you are. Space again stops and reads the point.
 - Period and comma: next and previous point of interest (zeros, peaks, valleys, corners, dots,
-  and where it crosses another function).
+  inflection points, and where it crosses another function). An inflection point has no sound of
+  its own; it is said when you land on it: "inflection point at 2, minus 16".
 - Home and End: the two ends of the curve.
-- F: change the step size (0.1, 0.25, 0.5 or 1).
+- F: change the step size (0.1, 0.25, 0.5 or 1; on a wide graph also longer steps, up to a tenth
+  of its width).
 - D: turn the slope sound on or off (see "What the sounds mean" below).
 
 Asking questions:
@@ -271,23 +289,39 @@ Asking questions:
   is an estimate ("about").
 - L: the limits from the left and the right and the value here, then what that means: continuous,
   a hole, a jump, a vertical asymptote, or the curve is only on one side.
+- B: how the curve bends where you are, from the second derivative, and the inflection points on the
+  graph (where the bending changes). On y = x^4 - 4x^3 at x = 1: "concave down, bending downward like
+  a cap. The second derivative is minus 12. Inflection points on this graph: 0, 0 and 2, minus 16."
+  A corner where the bending changes (|x^2 - 4| at 2) is not an inflection point, and neither is an
+  asymptote (1/x at 0); a vertical tangent can be one (the cube root at 0). It works on formulas and
+  on drawings (to check a sketch: "concave up on the left"), not on curves read from a PDF picture.
 - N: play the lowest note, zero and the highest note of this graph, with the numbers they stand
   for. (While drawing is on, N starts a new piece instead.)
 
-Tangent and secant lines:
+Tangent, normal and secant lines:
 
 - T: add the tangent line to the curve where you are. You hear its equation, for example "Tangent
   line at x = 1, where y is 1: y = 2x minus 1". Where there is no single tangent (a corner, a jump,
   the end of the curve, a vertical tangent) it says why and adds nothing. (While drawing is on, T
   changes an equation's numbers instead; use the menu.)
+- Shift+T: add the normal line where you are, the line through the point at a right angle to the
+  tangent. Its slope is minus 1 over the tangent's slope: on y = x^2 at x = 1 the tangent has slope
+  2, so you hear "Normal line at x = 1, where y is 1: y = minus 0.5x plus 1.5". Where the tangent is
+  flat the normal is a vertical line, which is said and not added; where the tangent is vertical
+  the normal is flat. (While drawing is on, use the menu.)
 - In the menu, "Add a secant line through this point and another one" asks for the other x. You
   hear its equation and its slope, which is the average rate of change between the two points.
 - A line is a function on the graph like the others: it is drawn in the picture, Tab goes to it, and
-  it has its own sound. Stepping along the curve, the place where the tangent touches, and the two
-  places the secant crosses, are points of interest. Several lines can be on the graph at once.
+  it has its own sound. Stepping along the curve, the place where the tangent touches, and the
+  places a secant or a normal crosses, are points of interest. Several lines can be on the graph at once.
 - Backspace (or Delete) takes back the last line or curve you added, and says which. The menu can
-  also remove all the lines. They are not saved in the document: they are gone when you leave graph
+  also remove all the lines. They are not saved in the graph: they are gone when you leave graph
   mode.
+- E: write the line in your document, under the graph, so you keep it: "Normal line to y = x^2 at
+  x = 1:" and then the equation, y = -(1/2)x + 3/2. Fractions stay fractions; numbers that are not
+  a simple fraction (the tangent to sin x) are written to four decimals, and you hear that they are
+  rounded. On a line, E writes that line; on the curve, the newest line made from it. A second line
+  goes under the first. (While drawing is on, use the menu.)
 
 More than one function:
 
@@ -300,6 +334,25 @@ Moving freely:
 
 - Arrow keys: move anywhere on the graph. When you land on a curve its tone plays and the point is
   said as "on" that function. C puts you back on the function.
+
+The size of the graph (for a graph you already have):
+
+- W: twice as wide, to hear more of the curve. minus 5 to 5 becomes minus 10 to 10; a graph that
+  starts at 0 keeps starting there and grows to the right (0 to 20 becomes 0 to 40).
+- Shift+W: half as wide, to hear a part of it closely.
+- In the menu, "Type the size of the graph": type x from and to, such as -50, 50. Add y from and to
+  after them, or leave those out and the height fits the curves.
+- For a graph of equations the height is fitted to the curves again each time. The document keeps
+  the new size, and the graph's line says it. A very wide graph gets a longer step, so it is not
+  hundreds of key presses across. (While drawing is on, W is drawing's own size box.)
+
+The question and the equation:
+
+- Q: read the question the graph belongs to: the nearest line with words above the graph in your
+  document (Ctrl+G puts the graph just under the equation, so this is the line above that).
+- On the screen, for anyone looking with you, graph mode shows the question at the top, then the
+  graph's equations as maths, then the graph itself as big as the window allows, with each axis's
+  letter at its end.
 
 A function with a formula, or one you drew, is said to two decimals: y = x² at 0.5 is "0.25", a
 zero at 1.73 is "1.73". A curve read from a PDF is measured from its drawing, so its numbers are
@@ -553,7 +606,7 @@ into a new folder, and copy your old data folder into it.
 Help > Check for updates asks GitHub's public "latest release" page whether a newer version is out,
 and if so offers its download page. Nothing is downloaded or installed by itself, and nothing about
 you or your documents is sent. Help > Settings > Writing can check each time the app starts (off
-unless you turn it on). See [what changed in 0.8.1](CHANGELOG.md).
+unless you turn it on). See [what changed in 0.8.2](CHANGELOG.md).
 
 
 ## The AI add-on (optional)

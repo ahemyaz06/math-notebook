@@ -6,12 +6,18 @@
 import { CalculusSoundEngine } from '/sound/sound-engine.js';
 import { detectLandmarks, findStepEvents, formatNumber } from '/sound/graph-math.js';
 import { sideLimit, sideSlope } from './maths.js';
-import { HIDEABLE, compileFunction, derivativeFunction, describeFunction, exactly, landmarksOf, say, setNumberStyle, setSourceExact, spokenLabel } from './graphs.js';
+import { HIDEABLE, axesOf, axisWords, compileFunction, derivativeFunction, describeFunction, exactly, fitYRange, landmarksOf, makeGraph, say, setNumberStyle, setSourceExact, spokenLabel, usualAxes } from './graphs.js';
 import { derivativeOf, drawingsOf, drawnFunction } from './draw.js';
 import { GraphEditor, describeDrawn } from './graph-edit.js';
 import { pointsFunction } from './curve-points.js';
 
 const STEPS = [0.1, 0.25, 0.5, 1];
+// A graph made wide (W) also has longer steps, so crossing it is not a thousand key presses:
+// those up to a tenth of its width (none for the usual minus 5 to 5).
+const LONG_STEPS = [2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+const stepsFor = (width) => [...STEPS, ...LONG_STEPS.filter((s) => s <= width / 10 + 1e-9)];
+// The widest a graph can be made, and the narrowest.
+const WIDEST = 1e6, NARROWEST = 1e-3;
 // Keys that act once however long they are held (see key()).
 const ONCE_KEYS = ['t', 'T', '-', '_', 'd', 'D', 'Backspace', 'Delete', "'", 'Enter'];
 // The new sound design: the first function on a graph has the sound chosen in Settings, and each
@@ -63,6 +69,51 @@ function lineFunction(spec, span) {
     },
   };
 }
+// Where a line was made: "at x = 1" (tangent, normal), "through x = 1 and x = 3" (secant).
+const lineAt = (entry) => (entry.kind === 'secant' ? `through x = ${exact(entry.a)} and x = ${exact(entry.b)}` : `at x = ${exact(entry.a)}`);
+// The kinds of lines in a list, in words: "tangent", "tangent and secant", "tangent, secant and normal".
+const lineKinds = (lines) => {
+  const kinds = ['tangent', 'secant', 'normal'].filter((k) => lines.some((l) => l.kind === k));
+  return kinds.length < 2 ? kinds.join('') : `${kinds.slice(0, -1).join(', ')} and ${kinds.at(-1)}`;
+};
+// A number as it is written in a document: a whole number, a fraction with a denominator up to
+// 100 when it is one to the computer's accuracy (-0.1111111111 is -1/9), or else four decimals.
+// { latex, plain, rounded }.
+export function writtenNumber(v) {
+  const sign = v < 0 ? '-' : '', a = Math.abs(v);
+  const close = (p, q) => Math.abs(a - p / q) <= 1e-9 * Math.max(1, a);
+  if (close(Math.round(a), 1)) return { latex: `${sign}${Math.round(a)}`, plain: `${sign}${Math.round(a)}`, rounded: false, whole: true };
+  for (let q = 2; q <= 100; q += 1) {
+    const p = Math.round(a * q);
+    if (close(p, q)) return { latex: `${sign}\\frac{${p}}{${q}}`, plain: `${sign}${p}/${q}`, rounded: false };
+  }
+  const d = String(Number(a.toFixed(4)));
+  return { latex: `${sign}${d}`, plain: `${sign}${d}`, rounded: true };
+}
+
+// The line y = m x + c as an equation to write in a document, in the graph's own letters:
+// { latex, plain, rounded }. digits 1 or 2: a line measured from a page, rounded as it is said.
+export function lineEquation(m, c, axes = { x: 'x', y: 'y' }, digits = 0) {
+  const num = (v) => (digits ? { ...writtenNumber(Number(v.toFixed(digits))), rounded: !Number.isInteger(v) } : writtenNumber(v));
+  const X = axes.x, Y = axes.y;
+  const M = num(m), C = num(c);
+  const mZero = M.whole && Number(M.plain) === 0, cZero = C.whole && Number(C.plain) === 0;
+  const rounded = (!mZero && M.rounded) || (!cZero && C.rounded);
+  if (mZero) return { latex: `${Y} = ${C.latex}`, plain: `${Y} = ${C.plain}`, rounded: C.rounded };
+  const neg = M.plain.startsWith('-');
+  const body = (s) => (neg ? s.slice(1) : s);
+  const one = M.whole && Math.abs(Number(M.plain)) === 1;
+  // A fraction is written before the letter in brackets in plain text, (1/9)x, so it is not 1/(9x).
+  let latex = `${neg ? '-' : ''}${one ? '' : body(M.latex)}${X}`;
+  let plain = `${neg ? '-' : ''}${one ? '' : M.plain.includes('/') ? `(${body(M.plain)})` : body(M.plain)}${X}`;
+  if (!cZero) {
+    const cn = C.plain.startsWith('-');
+    latex += ` ${cn ? '-' : '+'} ${cn ? C.latex.slice(1) : C.latex}`;
+    plain += ` ${cn ? '-' : '+'} ${cn ? C.plain.slice(1) : C.plain}`;
+  }
+  return { latex: `${Y} = ${latex}`, plain: `${Y} = ${plain}`, rounded };
+}
+
 const heightAt = (f, x) => { const l = f.limitAt(x); return l.defined ? l.y : NaN; };
 // Is the curve unbroken from a to b (no jump, asymptote or gap between)?
 const unbroken = (f, a, b) => {
@@ -287,13 +338,15 @@ function latexFunction({ latex }) {
 export class GraphMode {
   // onChange(graph): the graph was edited (Ctrl+D); canEdit(): may it be; edit: the editor's
   // menu and question dialogs and its button.
-  constructor({ root, status, onExit, onKeys = null, reading = null, onChange = null, canEdit = null, edit = {} }) {
+  // onWrite(words, latex): writes a line under the graph in the document; true when it did.
+  constructor({ root, status, onExit, onKeys = null, reading = null, onChange = null, canEdit = null, edit = {}, onWrite = null }) {
     this.root = root;
     this.status = status;
     this.reading = reading; // the same words on screen, for sighted helpers
     this.onExit = onExit;
     this.onKeys = onKeys; // F1 or question mark: the keys, as a table
     this.onChange = onChange;
+    this.onWrite = onWrite;
     this.canEdit = canEdit;
     this.editor = new GraphEditor(this, edit);
     this.sound = new CalculusSoundEngine();
@@ -503,9 +556,11 @@ export class GraphMode {
   }
 
   // graph: { title, summary, span: {x:[a,b], y:[c,d]}, curves: [...], points: [...], equations: [...] }
-  open(graph) {
+  // question: the words of the question the graph belongs to in the document (Q reads them).
+  open(graph, { question = '' } = {}) {
     this.editor.toggle(false);
     this.graph = graph;
+    this.question = String(question || '').trim();
     this.index = 0;
     this.lastKey = null; // the function Tab came from, for the difference (minus key)
     this.diffOf = null;
@@ -514,6 +569,10 @@ export class GraphMode {
     this.clock = 0; // counts the things done here, so Backspace knows which came last (tick)
     this.rebuild();
     this.step = STEPS.includes(this.settings.step) ? this.settings.step : 0.5;
+    // A wide graph (y = 100 - 4x from minus 5 to 30 is not; minus 500 to 500 is) starts with a
+    // longer step: no more than 200 steps across.
+    const width = this.span.x[1] - this.span.x[0];
+    if (width / this.step > 200) this.step = stepsFor(width).find((s) => width / s <= 200) ?? this.step;
     this.free = { x: 0, y: 0 };
     this.x = NaN;
     this.tracing = this.functions.length > 0;
@@ -521,7 +580,10 @@ export class GraphMode {
     this.root.hidden = false;
     this.root.focus();
     const names = this.functions.map((f) => f.label).join('; ');
-    this.speak(`Graph mode. ${this.functions.length} ${this.functions.length === 1 ? 'function' : 'functions'}${names ? `: ${names}` : ''}. `
+    // A function of another letter (A = 1200 - 4y^2) says which letter goes which way. (Written
+    // as x and y here: speak() puts in the graph's own letters.)
+    const letters = usualAxes(this.axes) ? '' : 'x goes across and y goes up, so a point is said as x, then y. ';
+    this.speak(`Graph mode. ${this.functions.length} ${this.functions.length === 1 ? 'function' : 'functions'}${names ? `: ${names}` : ''}. ${letters}`
       + `J and K step, Space plays, Control Enter opens a menu of everything, Escape goes back.`);
     this.seedSlide();
     this.draw();
@@ -561,7 +623,7 @@ export class GraphMode {
     (graph.functions || []).forEach((g, i) => {
       const f = { ...latexFunction(g), source: i, key: `eq:${i}`, owner: i };
       made.push(f);
-      const name = /^([a-z]\(x\))\s*=/i.exec(f.label)?.[1] || f.label;
+      const name = /^([a-z]\([a-z]\))\s*=/i.exec(f.label)?.[1] || f.label;
       for (let n = 1; n <= (g.derivative || 0); n += 1) {
         const c = derivativeFunction(f.compiled, n, this.boundary, derivativeName(n, name));
         const key = `d${n}:eq:${i}`;
@@ -587,6 +649,9 @@ export class GraphMode {
       ...(graph.equations || []).map((text, i) => { const f = equationFunction(text); return f && { ...f, key: `plain:${i}` }; }).filter(Boolean),
       ...made,
     ];
+    // The letters going across and up: x and y, or the formulas' own (y and A for A = 1200 - 4y^2).
+    this.axes = { x: 'x', y: 'y' };
+    try { this.axes = axesOf(this.functions.filter((f) => f.compiled && !f.derived).map((f) => f.compiled)); } catch { /* x and y */ }
     // Tangent and secant lines, worked out again from their function (so they follow it when it
     // is changed); one whose function is gone, or has no slope there any more, goes too.
     this.lines = (this.lines || []).filter((entry) => {
@@ -807,7 +872,17 @@ export class GraphMode {
     // A bare "jump at x = 0" where this function's own dots already say the jump with its
     // heights (the derivative of |x|) would be said twice.
     own = own.filter((l) => !(l.kind === 'jump' && onCurve.some((d) => Math.abs(d.x - l.x) < 1e-6 && /^jump at/.test(d.label))));
-    this.landmarks = [...own.map((l) => ({ ...l, label: spokenLabel(l) })), ...onCurve, ...crossings]
+    // Inflection points (where the bending changes, as B finds them) are stops too. They have no
+    // sound of their own; landing on one says it. Not on a student copy that hides anything,
+    // like crossings: they may be the question.
+    const second = hidden.size ? null : this.secondOf(f);
+    // (At the x of another point of interest within a hair, so it is said after it: sin x's at
+    // pi came a rounding before "crosses the x-axis at 3.14".)
+    const bends = second ? this.inflectionsOf(f, second, lo, hi).map(({ x, y }) => {
+      const at = own.find((l) => Math.abs(l.x - x) < 1e-6)?.x ?? x;
+      return { kind: 'inflection', x: at, y, label: `inflection point at ${say(at)}, ${say(y)}` };
+    }) : [];
+    this.landmarks = [...own.map((l) => ({ ...l, label: spokenLabel(l) })), ...onCurve, ...crossings, ...bends]
       .filter((l) => !hidden.has(l.kind) && l.x >= lo - 1e-9 && l.x <= hi + 1e-9);
     // A named point on this curve is a point of interest, said by its letter: "point b: valley
     // at ...". Where nothing else is there, it is one of its own (it has no sound of its own).
@@ -831,8 +906,19 @@ export class GraphMode {
 
   onGrid(x) { return Math.round(x / this.step) * this.step; }
 
+  // Words about this graph, written with x across and y up, in its own letters (see open()).
+  // The formulas, the question and the document's words for it are left as written.
+  words(text) {
+    if (usualAxes(this.axes)) return text;
+    // (Only the formulas as typed: a tangent line's name, "y = 2x minus 1", is words made here.)
+    const typed = this.functions.filter((f) => f.compiled && !f.derived);
+    const keep = [...typed.flatMap((f) => [f.label, shortName(f), ...(f.compiled.notes || [])]), this.question, this.graph?.summary, this.graph?.read];
+    return axisWords(text, this.axes, keep);
+  }
+
   speak(text, delay = 0) {
     clearTimeout(this.speakTimer);
+    text = this.words(text);
     const write = () => {
       this.status.textContent = '';
       setTimeout(() => { this.status.textContent = text; }, 20);
@@ -1026,6 +1112,87 @@ export class GraphMode {
     return f.rule;
   }
 
+  // f'' exactly: by the rules of calculus for a formula, from the drawn parts' polynomials for a
+  // drawing (draw.js derivativeOf, twice). Something with limitAt, or null.
+  secondOf(f) {
+    if (!f || f.derived || f.of !== undefined || f.difference) return null;
+    if (f.second === undefined || f.secondBoundary !== this.boundary) {
+      let made = null;
+      try {
+        if (f.compiled?.parts) { const d = derivativeFunction(f.compiled, 2, this.boundary, ''); made = d?.exact ? d.graph : null; }
+        else if (f.segs && f.drawing !== undefined) made = derivativeOf(derivativeOf(f, ''), '');
+      } catch { made = null; }
+      f.second = made;
+      f.secondBoundary = this.boundary;
+    }
+    return f.second;
+  }
+
+  // Where the curve changes the way it bends, between lo and hi: [{ x, y }]. The second
+  // derivative changes sign there, the curve is unbroken across it, and it has a tangent there
+  // (a vertical one counts: cbrt x at 0); a corner where the bending changes (|x^2 - 4| at 2) is
+  // not an inflection point.
+  inflectionsOf(f, second, lo, hi) {
+    const N = 800, out = [];
+    const d2 = (x) => { const l = second.limitAt(x); return l.defined && Number.isFinite(l.y) ? (Math.abs(l.y) < 1e-9 ? 0 : l.y) : NaN; };
+    const add = (x) => {
+      const r = Math.round(x * 1e6) / 1e6, at = Math.abs(x - r) < 1e-7 ? r : x;
+      if (out.some((p) => Math.abs(p.x - at) < 1e-6)) return;
+      const y = heightAt(f, at);
+      if (!Number.isFinite(y) || this.slopeAt(at, f).slope === null) return;
+      out.push({ x: at, y: Math.abs(y) < 1e-12 ? 0 : y });
+    };
+    let lastX = null, lastV = 0;
+    for (let i = 0; i <= N; i += 1) {
+      const x = lo + ((hi - lo) * i) / N, v = d2(x);
+      if (!Number.isFinite(v) || v === 0) continue;
+      if (lastX !== null && Math.sign(v) !== Math.sign(lastV) && unbroken(f, lastX, x)) {
+        // Narrow it down; where f'' has no value (cbrt x at 0) that point is the place.
+        // (Its own value, not rounded to 0 below 1e-9: sin x's would stop 1e-9 away from pi.)
+        let a = lastX, b = x, place = null;
+        for (let k = 0; k < 80 && place === null && b - a > 1e-15 * (1 + Math.abs(a)); k += 1) {
+          const mid = (a + b) / 2, s = second.limitAt(mid), dm = s.defined ? s.y : NaN;
+          if (dm === 0 || !Number.isFinite(dm)) place = mid;
+          else if (Math.sign(dm) === Math.sign(lastV)) a = mid; else b = mid;
+        }
+        add(place ?? (a + b) / 2);
+      }
+      lastX = x; lastV = v;
+    }
+    return out;
+  }
+
+  // B: how the curve bends where you are (concave up or down, from the second derivative), and
+  // the inflection points on the graph, where the bending changes.
+  bend() {
+    this.pause(false);
+    const f = this.fn;
+    if (!f) return 'No function to read.';
+    if (f.line) return 'A straight line does not bend: its second derivative is 0 everywhere.';
+    const second = this.secondOf(f);
+    if (!second) {
+      return f.of !== undefined || f.derived || f.difference ? 'This curve is made from another function. Tab to the function itself: B tells how that one bends.'
+        : 'How the curve bends is worked out for a formula or a drawing; a curve read from a page has neither.';
+    }
+    const x = this.tracing ? this.x : this.free.x;
+    const v = second.limitAt(x);
+    const num = (n) => exact(Number(n.toFixed(2)) || 0);
+    let here;
+    if (!Number.isFinite(heightAt(f, x))) here = `No point on ${shortName(f)} at x = ${exact(x)}.`;
+    else if (!v.defined || !Number.isFinite(v.y)) here = `At x = ${exact(x)} the second derivative has no value.`;
+    else if (Math.abs(v.y) < 1e-9) {
+      const h = 1e-3 * Math.max(1, Math.abs(x));
+      const [l, r] = [x - h, x + h].map((t) => second.limitAt(t)).map((s) => (s.defined ? Math.sign(Math.abs(s.y) < 1e-12 ? 0 : s.y) : 0));
+      here = `At x = ${exact(x)} the second derivative is 0: ${l && r && l !== r ? `the bending changes here, from concave ${l > 0 ? 'up' : 'down'} to concave ${r > 0 ? 'up' : 'down'}`
+        : l && l === r ? `concave ${l > 0 ? 'up' : 'down'} on both sides` : 'it does not bend here'}.`;
+    } else here = `At x = ${exact(x)}: concave ${v.y > 0 ? 'up, bending upward like a cup' : 'down, bending downward like a cap'}. The second derivative is ${num(v.y)}.`;
+    const points = this.inflectionsOf(f, second, this.lo, this.hi);
+    const shown = points.slice(0, 6).map((p) => `${say(p.x)}, ${say(p.y)}`);
+    const list = !points.length ? 'No inflection points on this graph.'
+      : `${points.length === 1 ? 'Inflection point' : 'Inflection points'} on this graph: ${shown.length > 1 ? `${shown.slice(0, -1).join('; ')} and ${shown.at(-1)}` : shown[0]}${points.length > 6 ? `, and ${points.length - 6} more` : ''}.`;
+    return `${here} ${list}`;
+  }
+
   // S: the slope at the cursor, in words. A curve measured from a page gives an estimate, to
   // one decimal; a formula or a drawing gives two.
   slope() {
@@ -1098,6 +1265,110 @@ export class GraphMode {
     this.speak(`Step ${exact(this.step)}.`);
   }
 
+  // The steps F goes through: longer ones too on a wide graph.
+  steps() { return stepsFor(this.span.x[1] - this.span.x[0]); }
+
+  // Q: the question the graph belongs to, as the document has it (shown above the graph too).
+  readQuestion() {
+    this.pause(false);
+    this.speak(this.question ? `The question: ${this.question}` : 'There is no question just above this graph in the document.');
+  }
+
+  // ---------- the size of the graph: W wider, Shift+W narrower, or the numbers typed ----------
+
+  // Does the graph have only formulas (no drawing, nothing read from a page)? Then a new width
+  // fits its height to the curves again, as a new graph would.
+  onlyFormulas(graph = this.graph) {
+    return Boolean((graph.functions || []).length) && !drawingsOf(graph).some((d) => d.pieces.length) && !(graph.curves || []).length && !(graph.equations || []).length;
+  }
+
+  // factor 2: twice as wide; 0.5: half as wide. Around the middle, except that a graph starting
+  // (or ending) at 0 keeps that end and grows to one side: 0 to 20 becomes 0 to 40.
+  widen(factor) {
+    this.pause(false);
+    const [x0, x1] = this.span.x;
+    const width = (x1 - x0) * factor;
+    if (width > WIDEST || width < NARROWEST) { this.speak(`The graph cannot be made ${factor > 1 ? 'wider' : 'narrower'}.`); return; }
+    const tidy = (v) => Number(v.toPrecision(12)) || 0;
+    const lo = x0 === 0 ? 0 : x1 === 0 ? -width : (x0 + x1) / 2 - width / 2;
+    this.setWindow([tidy(lo), tidy(lo + width)], null, factor > 1 ? 'Twice as wide' : 'Half as wide');
+  }
+
+  // The size typed: x from and to, and y from and to (left out: fitted to the formulas).
+  askWindow() {
+    this.pause(false);
+    const [x0, x1] = this.span.x, [y0, y1] = this.span.y;
+    const fits = this.onlyFormulas();
+    const label = fits ? 'x from, x to; then y from, y to, or leave those out to fit the curves' : 'x from, x to, y from, y to';
+    this.editor.ask('Size of the graph', this.words(label), fits ? `${x0}, ${x1}` : `${x0}, ${x1}, ${y0}, ${y1}`, (text) => {
+      const n = text.replace(/−/g, '-').split(/[\s,;]+|\bto\b/).filter(Boolean).map(Number);
+      if (!(n.length === 4 || (fits && n.length === 2)) || !n.every(Number.isFinite)) {
+        return this.words(fits ? 'Write two numbers, x from and x to, such as -10, 10; or four, with y from and y to after them.' : 'Write four numbers: x from, x to, y from, y to. For example -10, 10, -5, 5.');
+      }
+      if (n[0] >= n[1] || (n.length === 4 && n[2] >= n[3])) return 'Each "from" must be less than its "to".';
+      if (n[1] - n[0] > WIDEST || n[1] - n[0] < NARROWEST) return `The graph can be from ${exact(NARROWEST)} to ${exact(WIDEST)} wide.`;
+      this.setWindow([n[0], n[1]], n.length === 4 ? [n[2], n[3]] : null, 'The graph now shows');
+      return null;
+    });
+  }
+
+  // The graph shows x from x[0] to x[1], and y as given (null: fitted to the formulas, or as it
+  // was for a drawing or a page's graph). The document keeps the new size, unless this is the
+  // student preview (there it is only for now). words: how the change is said.
+  setWindow(x, y, words) {
+    let yr = y;
+    if (!yr && this.onlyFormulas()) {
+      try { yr = exactly(() => fitYRange(this.graph.functions.map((g) => compileFunction(g.latex, 'latex')), x)); } catch { yr = null; }
+    }
+    const span = { x, y: yr || this.span.y };
+    const keepX = this.tracing ? this.x : this.free.x;
+    const next = { ...this.graph, span };
+    if (this.canEdit?.() !== false) next.summary = this.documentWords(next);
+    this.graph = next;
+    this.rebuild(this.fn?.key);
+    // A step that suits the new width (no more than 200 steps across, no fewer than 10 when the
+    // step chosen in Settings allows it).
+    const width = x[1] - x[0], wanted = STEPS.includes(this.settings.step) ? this.settings.step : 0.5;
+    const before = this.step;
+    const list = stepsFor(width);
+    if (width / this.step > 200 || width / this.step < 10 || !list.includes(this.step)) {
+      this.step = width / wanted <= 200 && width / wanted >= 10 ? wanted
+        : width / wanted > 200 ? list.find((s) => width / s <= 200) ?? list.at(-1) : [...list].reverse().find((s) => width / s >= 10) ?? list[0];
+    }
+    this.prepareFunction(false);
+    this.x = this.onGrid(Math.max(this.lo, Math.min(this.hi, keepX)));
+    this.free = { x: Math.max(x[0], Math.min(x[1], this.free.x)), y: Math.max(span.y[0], Math.min(span.y[1], this.free.y)) };
+    this.seedSlide();
+    this.drawn = null;
+    this.draw();
+    if (this.canEdit?.() !== false) this.onChange?.(next);
+    const step = this.step !== before ? ` Step ${exact(this.step)}.` : '';
+    this.speak(exactly(() => `${words}: x from ${say(x[0])} to ${say(x[1])} and y from ${say(span.y[0])} to ${say(span.y[1])}.${step} ${this.fn ? this.where() : ''}`));
+  }
+
+  // The words the document keeps for the graph after its size changed: as a new graph of these
+  // formulas would have them; with equations and more (derivative curves, a drawing), as graph
+  // mode describes it at the new size; otherwise (a page's graph, a drawing alone) the words it
+  // had, with only the size in them changed (a page's measured numbers are not rounded again).
+  documentWords(graph) {
+    if (this.onlyFormulas(graph) && !graph.asEquation && !graph.functions.some((g) => g.derivative)) {
+      try { return makeGraph(graph.functions.map((g) => ({ text: g.latex, format: 'latex' })), graph.span).summary; } catch { /* as below */ }
+    }
+    const [x0, x1] = graph.span.x, [y0, y1] = graph.span.y;
+    const shown = this.words(exactly(() => `Shown for x from ${say(x0)} to ${say(x1)} and y from ${say(y0)} to ${say(y1)}.`));
+    const before = /Shown for [A-Za-z] from (minus )?[\d.]+ to (minus )?[\d.]+ and [A-Za-z] from (minus )?[\d.]+ to (minus )?[\d.]+\./;
+    if (!(graph.functions || []).length && !graph.asEquation) {
+      const old = graph.summary || '';
+      return before.test(old) ? old.replace(before, () => shown) : old;
+    }
+    const was = this.graph, span = this.span;
+    this.graph = graph; // description() reads the window from this.span
+    this.span = graph.span;
+    try {
+      return this.words(exactly(() => (graph.asEquation ? this.editor.equationWords() : this.description())));
+    } finally { this.graph = was; this.span = span; }
+  }
+
   // ---------- tangent and secant lines ----------
 
   // The line for an entry of this.lines ({ id, kind, of, a, b }), from its function as it is
@@ -1108,7 +1379,12 @@ export class GraphMode {
     if (!Number.isFinite(ya)) return null;
     let m, yb;
     if (entry.kind === 'tangent') m = this.slopeAt(entry.a, f).slope;
-    else { yb = heightAt(f, entry.b); m = (yb - ya) / (entry.b - entry.a); }
+    else if (entry.kind === 'normal') {
+      // At a right angle to the tangent: slope -1/m. A vertical tangent has a flat normal; a
+      // flat tangent has a vertical one, which is not a function of x.
+      const t = this.slopeAt(entry.a, f).slope;
+      m = typeof t !== 'number' || t === 0 ? NaN : Number.isFinite(t) ? -1 / t : 0;
+    } else { yb = heightAt(f, entry.b); m = (yb - ya) / (entry.b - entry.a); }
     if (typeof m !== 'number' || !Number.isFinite(m)) return null;
     // The line goes through its point with the slope as measured. Only what is left of
     // arithmetic is tidied (1.9999999997 is 2): rounding the slope or the height itself to six
@@ -1119,8 +1395,8 @@ export class GraphMode {
     const c = tidy(ya - m * entry.a);
     const measured = !known(f);
     const several = this.lines.filter((l) => l.kind === entry.kind).length > 1;
-    const at = entry.kind === 'tangent' ? `at x = ${exact(entry.a)}` : `through x = ${exact(entry.a)} and x = ${exact(entry.b)}`;
-    const rough = measured && entry.kind === 'tangent'; // a slope measured from a page's points
+    const at = lineAt(entry);
+    const rough = measured && entry.kind !== 'secant'; // a slope measured from a page's points
     return { ...entry, key: `line:${entry.id}`, m, c, ya, yb, measured,
       label: `${entry.kind} line to ${shortName(f)} ${at}, ${rough ? 'about ' : ''}${lineWords(m, c, rough ? 1 : 2, finePoints(f))}`,
       short: `the ${entry.kind} line${several ? ` ${at}` : ''}` };
@@ -1132,7 +1408,7 @@ export class GraphMode {
     const f = this.fn;
     const same = (p, q) => Math.abs(p - q) < 1e-9;
     const had = this.lines.find((l) => l.of === f.key && l.kind === entry.kind
-      && (entry.kind === 'tangent' ? same(l.a, entry.a) : (same(l.a, entry.a) && same(l.b, entry.b)) || (same(l.a, entry.b) && same(l.b, entry.a))));
+      && (entry.kind !== 'secant' ? same(l.a, entry.a) : (same(l.a, entry.a) && same(l.b, entry.b)) || (same(l.a, entry.b) && same(l.b, entry.a))));
     if (had) {
       const line = this.functions.find((g) => g.line?.id === had.id);
       this.speak(exactly(() => `Already on the graph: ${line ? line.label : `that ${entry.kind} line`}. Tab goes to it.`));
@@ -1170,6 +1446,26 @@ export class GraphMode {
     this.addLine({ kind: 'tangent', a }, (l) => `Tangent line at x = ${exact(a)}, where y is ${say(l.ya)}: ${sure ? '' : 'about '}${lineWords(l.m, l.c, sure ? 2 : 1, finePoints(f))}. It touches the curve here with the same slope. Tab goes to it.`);
   }
 
+  // Shift+T: the normal line, through the point at a right angle to the tangent.
+  addNormal() {
+    this.pause(false);
+    const f = this.fn;
+    if (!f) { this.speak('No function to draw a normal line to.'); return; }
+    if (f.line) { this.speak('This is a straight line already. Go to a function with Tab first.'); return; }
+    const a = this.tracing ? this.x : this.free.x;
+    if (!f.limitAt(a).defined) { this.speak(`No point on ${shortName(f)} at x = ${exact(a)}, so no normal line.`); return; }
+    const { slope, jump, uncertain } = this.slopeAt(a, f);
+    if (slope === null) {
+      this.speak(jump ? 'The curve jumps here, so it has no normal line.'
+        : uncertain ? 'The slope here could not be measured reliably, so no normal line was added.'
+          : 'There is no single tangent line here (a corner, a cusp or an end of the curve), so there is no normal line either.');
+      return;
+    }
+    if (slope === 0) { this.speak(`The tangent here is flat, so the normal line is vertical: the line x = ${exact(a)}. A vertical line is not a function of x, so it cannot be added.`); return; }
+    const sure = known(f);
+    this.addLine({ kind: 'normal', a }, (l) => `Normal line at x = ${exact(a)}, where y is ${say(l.ya)}: ${sure ? '' : 'about '}${lineWords(l.m, l.c, sure ? 2 : 1, finePoints(f))}. It crosses the curve here at a right angle to the tangent${Number.isFinite(slope) ? `, so its slope is minus 1 over ${exact(Number(slope.toFixed(4)) || 0)}` : ''}. Tab goes to it.`);
+  }
+
   // The secant line through the curve at the cursor and at another x. Returns what is wrong
   // with that x, in words, or null when the line was added.
   addSecant(text) {
@@ -1196,6 +1492,27 @@ export class GraphMode {
     this.editor.ask('Secant line', `The line goes through the curve at x = ${exact(a)} and at another x. The other x`, String(Number(other.toFixed(6))), (text) => this.addSecant(text));
   }
 
+  // E (or the menu): writes a tangent, normal or secant line's equation in the document, under
+  // the graph, so it stays when graph mode closes. Which line: the one you are on, or else the
+  // newest one made from the function you are on, or else the newest one.
+  writeLine(which = null) {
+    this.pause(false);
+    const lines = this.functions.filter((g) => g.line);
+    if (!lines.length) { this.speak('There is no tangent, normal or secant line to write. T adds a tangent line.'); return; }
+    const pick = which || (this.fn?.line ? this.fn : null)
+      || lines.filter((g) => g.line.of === this.fn?.key).sort((p, q) => q.line.seq - p.line.seq)[0]
+      || lines.slice().sort((p, q) => q.line.seq - p.line.seq)[0];
+    const spec = pick.line;
+    const of = this.functions.find((g) => g.key === spec.of);
+    const eq = lineEquation(spec.m, spec.c, usualAxes(this.axes) ? undefined : this.axes, spec.measured ? 1 : 0);
+    const name = of ? shortName(of) : 'the curve';
+    const about = spec.measured ? 'about ' : '';
+    const words = `${spec.kind.charAt(0).toUpperCase()}${spec.kind.slice(1)} line to ${name} ${this.words(lineAt(spec))}: ${about}`;
+    const note = eq.rounded ? ' Its numbers are rounded.' : '';
+    if (!this.onWrite || !this.onWrite(words, eq.latex)) { this.speak(`Could not write it in the document. The line is ${eq.plain}.`); return; }
+    this.speak(`Written in the document under the graph: ${words}${eq.plain}.${note}`);
+  }
+
   tick() { return (this.clock = (this.clock || 0) + 1); }
 
   // Delete or Backspace: takes back the last thing done here, whichever it was: a change to
@@ -1215,7 +1532,7 @@ export class GraphMode {
 
   removeLine(entry) {
     const back = this.fn?.line?.id === entry.id ? entry.of : this.fn?.key;
-    const at = entry.kind === 'tangent' ? `at x = ${exact(entry.a)}` : `through x = ${exact(entry.a)} and x = ${exact(entry.b)}`;
+    const at = lineAt(entry);
     this.lines = this.lines.filter((l) => l !== entry);
     this.rebuild(back);
     this.prepareFunction(false);
@@ -1228,12 +1545,13 @@ export class GraphMode {
   removeLines() {
     this.pause(false);
     const back = this.fn?.line ? this.fn.line.of : this.fn?.key;
+    const kinds = lineKinds(this.lines);
     this.lines = [];
     this.rebuild(back);
     this.prepareFunction(false);
     this.x = this.onGrid(Math.max(this.lo, Math.min(this.hi, this.x)));
     this.seedSlide();
-    this.speak(`Tangent and secant lines removed. ${this.fn ? `${this.fn.label}. ${this.where()}` : ''}`);
+    this.speak(`${kinds.charAt(0).toUpperCase()}${kinds.slice(1)} lines removed. ${this.fn ? `${this.fn.label}. ${this.where()}` : ''}`);
     this.draw();
   }
 
@@ -1254,18 +1572,28 @@ export class GraphMode {
       add('Read this point', () => this.speak(this.where()), 'V');
       add('Slope here', () => this.speak(this.slope()), 'S');
       add('Limits from the left and the right', () => this.speak(this.limits()), 'L');
+      add('How the curve bends here, and its inflection points', () => this.speak(this.bend()), 'B');
       if (!f.line) add('Add the tangent line here', () => this.addTangent(), free('T'));
+      if (!f.line) add('Add the normal line here, at a right angle to the tangent', () => this.addNormal(), free('Shift+T'), '');
       if (!f.line) add('Add a secant line through this point and another one', () => this.askSecant());
     }
     if (this.lines.length || this.diffOf || (drawing && this.editor.history.length)) add('Take back the last thing you did', () => this.takeBack(), 'Backspace', '');
-    if (this.lines.length) add(this.lines.length === 1 ? `Remove ${this.functions.find((g) => g.line)?.short}` : `Remove the ${this.lines.length} tangent and secant lines`, () => this.removeLines());
+    if (this.lines.length) add(f?.line ? 'Write this line in the document as an equation' : 'Write the newest line in the document as an equation', () => this.writeLine(), free('E'));
+    if (this.lines.length) add(this.lines.length === 1 ? `Remove ${this.functions.find((g) => g.line)?.short}` : `Remove the ${this.lines.length} ${lineKinds(this.lines)} lines`, () => this.removeLines());
     add('Describe the graph', () => this.describe(), 'I');
     if (this.functions.length > 1) add('Next function', () => this.nextFunction(false), 'Tab');
     if (this.diffOf) add('Take the difference curve away', () => this.toggleDifference(), 'minus', '-');
     else if (this.functions.filter((g) => g.key).length > 1) add('Difference between this function and another, as a curve', () => this.toggleDifference(), 'minus', '-');
     if (f) add('Hear the lowest and the highest note', () => this.playScale(), free('N'));
     add(this.slopeSound ? 'Turn the slope sound off' : 'Turn the slope sound on: a second note for the slope after each step', () => this.toggleSlopeSound(), 'D');
-    add(`Change the step, now ${exact(this.step)}`, () => this.editor.show('Step along x', STEPS.map((v) => ({ label: `${exact(v)}${v === this.step ? ', the step now' : ''}`, run: () => this.setStep(v) }))), 'F');
+    add(`Change the step, now ${exact(this.step)}`, () => this.editor.show(this.words('Step along x'), this.steps().map((v) => ({ label: `${exact(v)}${v === this.step ? ', the step now' : ''}`, run: () => this.setStep(v) }))), 'F');
+    // The size of the graph: wider to see more of it, narrower to see a part closely.
+    const [x0, x1] = this.span.x, wide = x1 - x0;
+    const twice = x0 === 0 ? [0, x1 * 2] : x1 === 0 ? [x0 * 2, 0] : [(x0 + x1) / 2 - wide, (x0 + x1) / 2 + wide];
+    add(`Twice as wide: x from ${exact(Number(twice[0].toPrecision(12)))} to ${exact(Number(twice[1].toPrecision(12)))}`, () => this.widen(2), free('W'));
+    add('Half as wide', () => this.widen(0.5), free('Shift+W'), '');
+    add('Type the size of the graph', () => this.askWindow());
+    if (this.question) add('Read the question above the graph', () => this.readQuestion(), 'Q');
     if (f) {
       add('Go to the start of the curve', () => { this.tracing = true; this.traceTo(this.lo, false); }, 'Home', '');
       add('Go to the end of the curve', () => { this.tracing = true; this.traceTo(this.hi, false); }, 'End', '');
@@ -1282,7 +1610,8 @@ export class GraphMode {
     if (this.editor.grab || this.editor.tune) { this.speak('Finish moving the point or changing the numbers first: Enter or Escape.'); return; }
     this.pause(false);
     clearTimeout(this.speakTimer);
-    this.editor.show(`Graph menu${this.fn ? `, on ${shortName(this.fn)} at ${this.where()}` : ''}`, this.menuItems());
+    // (In the graph's own letters, as everything said here is: A = 1200 - 4y^2 has y across.)
+    this.editor.show(this.words(`Graph menu${this.fn ? `, on ${shortName(this.fn)} at ${this.where()}` : ''}`), this.menuItems().map((item) => ({ ...item, label: this.words(item.label) })));
   }
 
   // The same actions from Math > Graph (for mouse users, and to find them by name).
@@ -1293,6 +1622,9 @@ export class GraphMode {
     if (name === 'menu') { this.openMenu(); return; }
     if (name === 'tangent') { this.addTangent(); return; }
     if (name === 'secant') { this.askSecant(); return; }
+    if (name === 'normal') { this.addNormal(); return; }
+    if (name === 'writeLine') { this.writeLine(); return; }
+    if (name === 'bend') { this.speak(this.bend()); return; }
     this.key({ key: keys[name], shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, preventDefault() {} });
   }
 
@@ -1310,8 +1642,9 @@ export class GraphMode {
     const handled = () => e.preventDefault();
     // (While drawing, M and the Applications key are the drawing menu, and T changes numbers.)
     if (k === 'm' || k === 'M' || k === 'ContextMenu' || (k === 'F10' && e.shiftKey)) { handled(); this.openMenu(); return; }
-    if (k === 't' || k === 'T') { handled(); this.addTangent(); return; }
+    if (k === 't' || k === 'T') { handled(); if (e.shiftKey) this.addNormal(); else this.addTangent(); return; }
     if (k === 'Backspace' || k === 'Delete') { handled(); this.takeBack(); return; }
+    if (k === 'e' || k === 'E') { handled(); this.writeLine(); return; }
     // The keys as a table to read row by row (not one long sentence).
     if ((k === 'F1' || k === '?' || k === 'h' || k === 'H') && this.onKeys) { handled(); this.pause(false); this.onKeys(); return; }
     if (k === 'Escape') { handled(); this.close(); return; }
@@ -1332,6 +1665,7 @@ export class GraphMode {
     if (k === 'i' || k === 'I') { handled(); this.describe(); return; }
     if (k === 's' || k === 'S') { handled(); this.pause(false); this.speak(this.slope()); return; }
     if (k === 'l' || k === 'L') { handled(); this.pause(false); this.speak(this.limits()); return; }
+    if (k === 'b' || k === 'B') { handled(); this.speak(this.bend()); return; }
     if (k === 'd' || k === 'D') { handled(); this.toggleSlopeSound(); return; }
     if (k === 'n' || k === 'N') { handled(); this.playScale(); return; }
     if (k === '-' || k === '_') { handled(); this.toggleDifference(); return; }
@@ -1339,7 +1673,10 @@ export class GraphMode {
     if (k === ',') { handled(); this.jumpLandmark(-1); return; }
     if (k === 'Home') { handled(); this.pause(false); this.tracing = true; this.traceTo(this.lo, false); return; }
     if (k === 'End') { handled(); this.pause(false); this.tracing = true; this.traceTo(this.hi, false); return; }
-    if (k === 'f' || k === 'F') { handled(); this.setStep(STEPS[(STEPS.indexOf(this.step) + (e.shiftKey ? STEPS.length - 1 : 1)) % STEPS.length]); return; }
+    if (k === 'f' || k === 'F') { handled(); const list = this.steps(); this.setStep(list[(list.indexOf(this.step) + (e.shiftKey ? list.length - 1 : 1)) % list.length]); return; }
+    // W: twice as wide; Shift+W: half as wide. (While drawing, W is drawing's size box.)
+    if (k === 'w' || k === 'W') { handled(); this.widen(e.shiftKey ? 0.5 : 2); return; }
+    if (k === 'q' || k === 'Q') { handled(); this.readQuestion(); return; }
     if (k === '?' || k === 'h' || k === 'H') {
       handled();
       this.speak('J and K step, Space plays, period and comma jump, S slope, L limits, I describes, Escape goes back.');
@@ -1397,14 +1734,21 @@ export class GraphMode {
     const axisY = Math.min(H - 4, Math.max(12, py(0))), axisX = Math.min(W - 24, Math.max(4, px(0)));
     // (No number right at the edge, where it would be cut off.)
     const inside = (lo, hi) => (v) => v !== 0 && v > lo + (hi - lo) * 0.03 && v < hi - (hi - lo) * 0.03;
+    // The up axis's letter goes left of it, away from its numbers (on the right), when there is
+    // room; at the left edge it goes right, and the numbers leave it the top.
+    const letterLeft = axisX >= 30;
     const labels = ticks(x0, x1).filter(inside(x0, x1)).map((v) => `<text x="${px(v)}" y="${axisY + 14}" text-anchor="middle">${v}</text><line x1="${px(v)}" y1="${axisY - 3}" x2="${px(v)}" y2="${axisY + 3}" stroke="var(--muted)"/>`).join('')
-      + ticks(y0, y1).filter(inside(y0, y1)).map((v) => `<text x="${axisX + 6}" y="${py(v) + 4}">${v}</text><line x1="${axisX - 3}" y1="${py(v)}" x2="${axisX + 3}" y2="${py(v)}" stroke="var(--muted)"/>`).join('');
+      + ticks(y0, y1).filter(inside(y0, y1)).filter((v) => letterLeft || py(v) > 28).map((v) => `<text x="${axisX + 6}" y="${py(v) + 4}">${v}</text><line x1="${axisX - 3}" y1="${py(v)}" x2="${axisX + 3}" y2="${py(v)}" stroke="var(--muted)"/>`).join('');
     // A formula's own holes ((x^2-4)/(x-2) at 2) and ends that are left out are open circles too.
     const own = (this.shapes || []).filter((l) => (l.kind === 'open-point' && !this.dots.some((d) => Math.abs(d.x - l.x) < 1e-9)) || (l.kind === 'endpoint' && !l.included));
     const dots = [...(this.dots || []), ...own.map((l) => ({ kind: 'open-point', x: l.x, y: l.y }))].map((d) => `<circle cx="${px(d.x)}" cy="${py(d.y)}" r="4.5" fill="${d.kind === 'open-point' ? 'var(--bg)' : 'var(--text)'}" stroke="var(--text)" stroke-width="1.5"/>`).join('');
     // The letters that name points, on the side of the curve the page prints them.
     const names = (this.marks || []).map((m) => `<text class="graph-mark" x="${px(m.x)}" y="${py(m.y) + (m.below ? 24 : -12)}" text-anchor="middle">${escapeText(m.name)}</text>`).join('');
-    svg.innerHTML = `<line x1="${px(0)}" y1="0" x2="${px(0)}" y2="${H}" stroke="var(--line)"/><line x1="0" y1="${py(0)}" x2="${W}" y2="${py(0)}" stroke="var(--line)"/>${labels}${paths}${dots}${names}`
+    // Each axis's letter at its end: x and y, or the formula's own (y across and A up).
+    const axes = this.axes || { x: 'x', y: 'y' };
+    const letters = `<text class="axis-name" x="${W - 8}" y="${axisY > 30 ? axisY - 8 : axisY + 30}" text-anchor="end">${escapeText(axes.x)}</text>`
+      + `<text class="axis-name" x="${letterLeft ? axisX - 8 : axisX + 8}" y="18" text-anchor="${letterLeft ? 'end' : 'start'}">${escapeText(axes.y)}</text>`;
+    svg.innerHTML = `<rect class="graph-frame" x="0" y="0" width="${W}" height="${H}"/><line x1="${px(0)}" y1="0" x2="${px(0)}" y2="${H}" stroke="var(--line)"/><line x1="0" y1="${py(0)}" x2="${W}" y2="${py(0)}" stroke="var(--line)"/>${labels}${letters}${paths}${dots}${names}`
       + '<circle class="graph-cursor" r="7" fill="none" stroke="var(--check-line)" stroke-width="3"/>';
   }
 }

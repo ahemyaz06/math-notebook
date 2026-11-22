@@ -198,6 +198,8 @@ function readLine(source, defs, compileFunction) {
     if (!compileFunction) no('Functions written in pieces are not checked here.');
     let made;
     try { made = compileFunction(source.latex, 'latex'); } catch (error) { no(`This function in pieces could not be read: ${error.message}`); }
+    // (The graphs read pieces of t or y too; this check works with x.)
+    if (made.variable && made.variable !== 'x') no(`This function in pieces varies ${made.variable}; the check reads functions in pieces of x only.`);
     const label = /^([a-z])\(x\)|^y\b/i.exec(made.label || '');
     line.kind = 'values';
     line.values = [{ type: 'native', f: (x) => made.graph.yAt(x) }];

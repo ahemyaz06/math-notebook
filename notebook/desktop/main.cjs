@@ -41,6 +41,12 @@ let win = null;
 // the save question, so test runs never interrupt the person using the computer.
 const TESTING = process.env.MATH_NOTEBOOK_TEST === '1';
 let allowClose = TESTING;
+// Test runs are silent too: the sounds are still made and checked, but nothing reaches the
+// speakers. (MATH_NOTEBOOK_TEST_SOUND=1 lets a test be heard on purpose.)
+if (TESTING && process.env.MATH_NOTEBOOK_TEST_SOUND !== '1') {
+  app.commandLine.appendSwitch('mute-audio');
+  app.on('web-contents-created', (_event, contents) => contents.setAudioMuted(true));
+}
 
 function startServer(dataDir) {
   return new Promise((resolve, reject) => {
@@ -177,11 +183,14 @@ function buildMenu() {
         { label: '&Describe the graph (I)', click: send('graphDescribe') },
         { label: 'S&lope here (S)', click: send('graphSlope') },
         { label: 'Li&mits from the left and right (L)', click: send('graphLimits') },
+        { label: 'How the curve bends, and inflection points (B)', click: send('graphBend') },
         { label: 'Slope s&ound on or off (D)', click: send('graphSlopeSound') },
         { label: 'Lowest a&nd highest note (N)', click: send('graphScale') },
         { label: 'Difference from the function before (minus)', click: send('graphDifference') },
         { label: 'Add the &tangent line here (T)', click: send('graphTangent') },
+        { label: 'Add the normal line here (Shift+T)', click: send('graphNormal') },
         { label: 'Add a secant line through this point and another…', click: send('graphSecant') },
+        { label: 'Write the line in the document as an equation (E)', click: send('graphWriteLine') },
         { label: 'Change the &step size (F)', click: send('graphStep') },
         { label: '&Back to the document (Escape)', click: send('graphClose') },
       ] },

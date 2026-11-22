@@ -386,33 +386,57 @@ function intervalWords({ open, close, lo, hi }) {
   return parts.length === 2 ? `${lo} ${open === '[' ? '<=' : '<'} x ${close === ']' ? '<=' : '<'} ${hi}` : parts[0] || 'otherwise';
 }
 
+// The letter a function varies, from its plain text: t in h(t) = 2t, y in A = 1200 - 4y^2; x when
+// it has none or several. (For writing an interval with its own letter: t in [0, 4].)
+function letterOf(main) {
+  try {
+    const found = new Set();
+    const walk = (n) => {
+      if (!n || typeof n !== 'object') return;
+      if (n.type === 'var' && n.name !== 'e') found.add(n.name);
+      for (const v of Object.values(n)) if (v && typeof v === 'object') walk(v);
+    };
+    const tree = new Parser(main).parse();
+    // Only the formula side: not A in A = ..., not h in h(t) = ...
+    const side = tree.type === 'rel' ? [tree.left, tree.right].find((s) => !(s.type === 'var' || (s.type === 'mul' && s.left.type === 'var' && s.right.type === 'paren'))) || tree.right : tree;
+    walk(side);
+    const call = tree.type === 'rel' && [tree.left, tree.right].find((s) => s.type === 'mul' && s.left.type === 'var' && s.right.type === 'paren' && s.right.inner.type === 'var');
+    if (call) return call.right.inner.name;
+    return found.size === 1 ? [...found][0] : 'x';
+  } catch { return 'x'; }
+}
+
 // The function and where it applies, from plain text; null when the text has no interval.
-// Returns { main, condition (comparisons of x, or 'otherwise'), kind, interval }.
+// Returns { main, condition (comparisons of x, or 'otherwise'), kind, interval }. A function of
+// another letter has its interval written with that letter (h(t) = 2t, t in [0, 4]; A = ... for
+// 0 < y < 17); the condition of an interval is still written with x.
 export function splitDomain(text) {
   const source = text.replace(/∈/g, ' in ').trim();
   // {0 < x < 1} after the function. A condition compares; braces around maths, sqrt{x+1} or
   // e^{2x} typed as in LaTeX, are not one.
   const braces = /^(.*\S)\s*,?\s*\{([^{}]*)\}$/.exec(source);
-  if (braces && /=/.test(braces[1]) && /\bx\b/.test(braces[2]) && /[<>≤≥≠]|!=|\bin\b/.test(braces[2])) {
+  if (braces && /=/.test(braces[1]) && /\b[A-Za-z]\b/.test(braces[2]) && /[<>≤≥≠]|!=|\bin\b/.test(braces[2])) {
     const inner = braces[2].trim();
     const main = braces[1].trim().replace(/,$/, '');
     const interval = intervalCondition(inner) && trailingInterval(inner);
-    if (interval) return { main, condition: intervalWords(interval), kind: 'interval', interval };
+    if (interval) return { main, condition: intervalWords(interval), kind: 'interval', interval, letter: letterOf(main) };
     return { main, condition: inner, kind: 'braces', inner };
   }
   // ... [a, b], ... on [a, b], ... x in [a, b], ... for x in (a, b).
   const found = trailingInterval(source);
   if (found && found.lo && found.hi) {
     // "x on" too, after a comma or "for" (y = sin x, x on [0, 2pi]); after a space it would take
-    // the x from sin x, so there "on" alone is the word.
-    const m = /^(.*?\S)\s*(,)?\s*(?:\b(on|for|when|where|if)\b\s*)?(\bx\s*in\b\s*|(?<=(?:,|\b(?:for|when|where|if))\s*)\bx\s*on\b\s*)?$/i.exec(found.before);
+    // the x from sin x, so there "on" alone is the word. Another letter needs a space before
+    // "in" (t in [0, 4]), so min [0, 1] is not "m in".
+    const m = /^(.*?\S)\s*(,)?\s*(?:\b(on|for|when|where|if)\b\s*)?(\b(?:x\s*|[A-Za-z]\s+)in\b\s*|(?<=(?:,|\b(?:for|when|where|if))\s*)\b[A-Za-z]\s*on\b\s*)?$/i.exec(found.before);
     // A bare (a, b) after a comma could be a point, so it needs "on" or "x in"; [a, b] cannot.
     if (m && /=/.test(m[1]) && (m[3] || m[4] || (m[2] && (found.open === '[' || found.close === ']')))) {
-      return { main: m[1].replace(/,$/, '').trim(), condition: intervalWords(found), kind: 'interval', interval: found };
+      const main = m[1].replace(/,$/, '').trim();
+      return { main, condition: intervalWords(found), kind: 'interval', interval: found, letter: m[4] ? m[4].trim()[0] : letterOf(main) };
     }
   }
   // ... for 0 < x < 1 (also when, where, if).
-  const words = /^(.*?\S)\s*,?\s*\b(for|when|where|if)\b\s+(.*\bx\b.*)$/i.exec(source);
+  const words = /^(.*?\S)\s*,?\s*\b(for|when|where|if)\b\s+(.*\b[A-Za-z]\b.*)$/i.exec(source);
   if (words && /=/.test(words[1]) && /[<>]|<=|>=|!=|≤|≥|≠/.test(words[3])) {
     return { main: words[1].trim(), condition: words[3].trim(), kind: 'words', word: words[2].toLowerCase(), inner: words[3].trim() };
   }
@@ -423,7 +447,7 @@ function domainLatex(domain) {
   if (domain.kind === 'interval') {
     const { open, close, lo, hi } = domain.interval;
     const end = (v) => (IS_INF.test(v) ? '\\infty' : IS_MINUS_INF.test(v) ? '-\\infty' : plainToLatex(v));
-    return `x \\in ${open}${end(lo)}, ${end(hi)}${close}`;
+    return `${domain.letter || 'x'} \\in ${open}${end(lo)}, ${end(hi)}${close}`;
   }
   if (domain.kind === 'words') return `\\text{${domain.word} } ${plainToLatex(domain.inner)}`;
   return plainToLatex(domain.inner);

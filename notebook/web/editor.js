@@ -1520,11 +1520,25 @@ const graphMode = new GraphMode({
     if (!graphReturn) return;
     graphs.set(graphReturn.dataset.graphId, graph);
     writeGraphLine(graphReturn, graph);
+    showGraphTop(graphReturn, graph); // an equation added or changed is shown at the top too
     setDirty(true);
   },
   canEdit: () => !studentView,
   edit: { menu: $('graph-menu'), ask: $('graph-ask'), button: $('graph-edit') },
+  // E in graph mode: a tangent, normal or secant line written under the graph, words then the
+  // equation. A second one goes under the first, so they stay in the order they were written.
+  onWrite: (words, latex) => {
+    if (!graphReturn?.isConnected) return false;
+    const p = el('p');
+    p.append(words, mathSpan(latex));
+    const last = writtenUnder.get(graphReturn);
+    (last?.isConnected && last.parentNode === graphReturn.parentNode ? last : graphReturn).after(p);
+    writtenUnder.set(graphReturn, p);
+    setDirty(true);
+    return true;
+  },
 });
+const writtenUnder = new WeakMap(); // graph line -> the last line E wrote under it
 
 // Ctrl+Shift+G: an empty graph, minus 5 to 5 both ways, on a line of its own right here. It
 // opens ready to draw on.
@@ -1562,7 +1576,36 @@ function exploreGraph(block = currentBlock()) {
   const graph = target && graphs.get(target.dataset.graphId);
   if (!graph) { say('There is no graph here. Insert one from the Insert menu, or import a PDF with graphs.'); return; }
   graphReturn = target;
-  graphMode.open(graph);
+  const question = showGraphTop(target, graph);
+  graphMode.open(graph, { question: question ? spoken(question) : '' });
+}
+
+// The question a graph belongs to: the nearest line above it with words in it, past the line of
+// its equation (Ctrl+G puts the graph just under the equation's line). null when none is close.
+function questionAbove(line) {
+  let n = line?.previousElementSibling;
+  for (let steps = 0; n && steps < 12; n = n.previousElementSibling, steps += 1) {
+    if (n.classList.contains('graph-line') || n.classList.contains('figure-line') || isBlankLine(n)) continue;
+    const words = n.cloneNode(true);
+    words.querySelectorAll('.eq, .comment').forEach((e) => e.remove());
+    if (!/[A-Za-z]{2,}/.test(words.textContent)) continue; // only maths: the equation's own line
+    return n;
+  }
+  return null;
+}
+
+// The top of graph mode, for anyone looking at the screen: the question, as the document shows
+// it, and the graph's equations drawn as maths (Q reads the question; the equations are said on
+// opening). Returns the question's line.
+function showGraphTop(line, graph) {
+  const block = questionAbove(line);
+  const q = $('graph-question'), title = $('graph-mode-title');
+  q.replaceChildren(...(block ? [...block.cloneNode(true).childNodes] : []));
+  q.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  q.hidden = !block;
+  const eqs = (graph?.functions || []).map((f) => mathSpan(f.latex));
+  title.replaceChildren(...(eqs.length ? eqs.flatMap((e, i) => (i ? [document.createTextNode(';   '), e] : [e])) : [document.createTextNode('Graph mode')]));
+  return block;
 }
 
 // ---------- review notes ----------
@@ -2962,7 +3005,7 @@ async function exportStudentPdf() {
 const PREVIEW_SAFE = new Set(['studentPreview', 'teacherMode', 'keys', 'exploreGraph', 'readLine', 'find', 'findNext', 'findPrevious', 'wordCount',
   'nextHeading', 'previousHeading', 'headingList', 'nextNote', 'previousNote', 'saveStudentCopy', 'exportStudentDocx', 'exportStudentPdf',
   'settings', 'settingsReading', 'settingsSound', 'settingsAi', 'print', 'graphPlay', 'graphNextPoint', 'graphPreviousPoint',
-  'graphDescribe', 'graphReadPoint', 'graphStep', 'graphNextFunction', 'graphClose', 'graphSlope', 'graphLimits', 'graphSlopeSound', 'graphScale', 'graphDifference', 'graphMenu', 'graphTangent', 'graphSecant', 'soundGuide', 'copyGraphLatex', 'convertMath', 'save', 'saveAs', 'checkLine']);
+  'graphDescribe', 'graphReadPoint', 'graphStep', 'graphNextFunction', 'graphClose', 'graphSlope', 'graphLimits', 'graphSlopeSound', 'graphScale', 'graphDifference', 'graphMenu', 'graphTangent', 'graphBend', 'graphNormal', 'graphSecant', 'graphWriteLine', 'soundGuide', 'copyGraphLatex', 'convertMath', 'save', 'saveAs', 'checkLine']);
 
 // When a dialog closes, the document gets the focus back, unless graph mode or another
 // dialog is open (they keep it).
@@ -3101,13 +3144,15 @@ async function showKeys(section = null) {
       ['New graph from equations', 'Insert menu'], ["Show or hide a graph's description (a graph read from a PDF starts short)", 'F4 on its line'],
       ["Show or hide every graph's description", 'Shift+F4'], ['Numbers in those descriptions: rounded (1.01 is 1) or as read', 'F2']]],
     ['In graph mode', [['Menu of everything you can do here', 'Ctrl+Enter, or M'], ['Step along the function', 'J and K'], ['Play or stop', 'Space'], ['Next and previous point of interest', 'Period and comma'],
-      ['Slope here', 'S'], ['Limits from the left and the right', 'L'], ['Slope sound on or off', 'D'],
+      ['Slope here', 'S'], ['Limits from the left and the right', 'L'], ['How the curve bends (concave up or down) and its inflection points', 'B'], ['Slope sound on or off', 'D'],
       ['Hear the lowest and the highest note, and what they stand for', 'N'],
       ['Difference from the function before, as a curve; again removes it', 'Minus'],
-      ['Tangent line where you are', 'T'], ['Secant line through this point and another', 'In the menu'],
+      ['Tangent line where you are', 'T'], ['Normal line where you are, at a right angle to the tangent', 'Shift+T'], ['Secant line through this point and another', 'In the menu'], ['Write the line in the document as an equation, under the graph', 'E'],
       ['Take back the last line or curve you added', 'Backspace or Delete'],
       ['Read the point', 'V'], ['Describe the graph', 'I'], ['Move freely', 'Arrow keys'], ['Back on the function', 'C'],
       ['Next and previous function', 'Tab, Shift+Tab'], ['Ends of the function', 'Home and End'], ['Step size', 'F'],
+      ['Graph twice as wide, to see more of it', 'W'], ['Graph half as wide', 'Shift+W'], ['Type the size of the graph', 'In the menu'],
+      ['Read the question above the graph', 'Q'],
       ['Draw on the graph, on or off', 'Ctrl+D'], ['These keys', 'F1 or question mark'], ['Back to the document', 'Escape']]],
     ['Drawing on a graph (Ctrl+D)', [['Move the cursor', 'Arrow keys'], ['Put a point here; it is joined to the last one', 'Enter'],
       ['Menu of everything you can do here', 'M, or Enter on a point'], ['Next and previous point you put down', 'Period and comma'],
@@ -3972,6 +4017,9 @@ const COMMANDS = {
   graphMenu: () => graphCommand('menu'),
   graphTangent: () => graphCommand('tangent'),
   graphSecant: () => graphCommand('secant'),
+  graphNormal: () => graphCommand('normal'),
+  graphBend: () => graphCommand('bend'),
+  graphWriteLine: () => graphCommand('writeLine'),
   teacherMode: () => setTeacherMode(!teacherMode),
   hideLine: hideLines,
   hideWords,
