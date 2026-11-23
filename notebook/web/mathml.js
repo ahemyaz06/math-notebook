@@ -298,11 +298,27 @@ export function mathmlToLatex(source, { useAnnotation = true } = {}) {
     : part.replace(/\s+/g, ' ').replace(/ ([_^}])/g, '$1'))).join('').trim();
 }
 
+// Temml writes a function's name and its invisible "apply function" sign as a group of their own
+// (<mrow><mi>ln</mi><mo>&#x2061;</mo></mrow>). MathCAT, which NVDA uses to speak MathML, then says
+// ln(x) as "the natural log of, times x" and 3 sin(x) as "3 sine of times x". Without the group it
+// says "the natural log of x". An mrow draws nothing of its own, so the picture is the same.
+// (Not inside <semantics>, whose first child must stay one element.)
+const ROW_PARENTS = new Set(['math', 'mrow', 'mstyle', 'mtd', 'msqrt', 'menclose', 'mpadded', 'mphantom', 'merror']);
+export function ungroupFunctionNames(root) {
+  for (const row of [...root.querySelectorAll('mrow')]) {
+    const last = row.lastElementChild;
+    if (last?.localName !== 'mo' || last.textContent !== '\u2061' || !ROW_PARENTS.has(row.parentElement?.localName)) continue;
+    row.replaceWith(...row.childNodes);
+  }
+  return root;
+}
+
+// Temml has no \mbox or \hbox; in maths they are \text (\lim f(x) \mbox{ and } \lim g(x)).
+// Nor nicefrac's \nicefrac{\pi}{2}, a small fraction: \tfrac. The document draws with this too.
+export const temmlSource = (latex) => latex.replace(/\\[mh]box(?![A-Za-z])\s*\{/g, '\\text{').replace(/\\nicefrac(?![A-Za-z])/g, '\\tfrac');
+
 export function latexToMathml(latex, display = false) {
-  // Temml has no \mbox or \hbox; in maths they are \text (\lim f(x) \mbox{ and } \lim g(x)).
-  // Nor nicefrac's \nicefrac{\pi}{2}, a small fraction: \tfrac.
-  const source = latex.replace(/\\[mh]box(?![A-Za-z])\s*\{/g, '\\text{').replace(/\\nicefrac(?![A-Za-z])/g, '\\tfrac');
-  return temml.renderToString(source, { displayMode: display, annotate: true, throwOnError: true, xml: true });
+  return temml.renderToString(temmlSource(latex), { displayMode: display, annotate: true, throwOnError: true, xml: true });
 }
 
 // ---------- MathML -> OMML (Word's own equations) ----------

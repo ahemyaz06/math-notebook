@@ -2,6 +2,34 @@
 
 Earlier versions are described on the [releases page](https://github.com/ahemyaz06/math-notebook/releases).
 
+## 0.8.2.2 (beta)
+
+### Equations said in focus mode as in browse mode
+
+- When the cursor comes to an equation, the notebook says it in the words NVDA uses in browse
+  mode, from NVDA's own MathCAT and your NVDA maths settings: "y is equal to, the natural log of
+  x". It used to say the typed form, "Equation: y = ln(x)".
+- It is said sooner: about a tenth of a second after the cursor arrives, not a quarter.
+- Help > Settings > Writing > "How an equation is said" can choose the typed form instead. Where
+  NVDA has no MathCAT (and the MathCAT add-on is not installed), the typed form is said.
+- An equation stepped through with the arrow keys and left as it was is not said again.
+- Going up and down between two equation lines says each one again.
+
+### Questions from a PDF are ordinary text
+
+- Questions from a PDF were read-only, and in focus mode NVDA read one letter or nothing in them.
+  They are now ordinary text, read and changed like any other line. The answer box after each
+  question stays. Notebooks saved with read-only questions open with ordinary text.
+
+### Fixed
+
+- A function followed by brackets, such as ln(2 + x), 3 sin(x) or cos(2x), was said by MathCAT
+  with an extra "times" ("the natural log of, times, open paren 2 plus x"), in browse mode too.
+- [-pi/2, pi/2] written with \mbox and \nicefrac showed as its LaTeX text in the document. It
+  shows as maths.
+- Faster undo, redo and opening of a notebook (each equation is drawn once), and typing no longer
+  checks every question on each key.
+
 ## 0.8.2 (beta)
 
 ### Graphs of other letters

@@ -11,7 +11,7 @@ NVDA and MathCAT. You can:
 
 Everything runs on your own computer, without AI unless you add it. It is a beta made by one
 student, built first for one calculus course, so read [What has been tested](#what-has-been-tested)
-before relying on it. The [changelog](notebook/CHANGELOG.md) lists what is new in 0.8.2.
+before relying on it. The [changelog](notebook/CHANGELOG.md) lists what is new in 0.8.2.2.
 
 ## Download
 

@@ -78,6 +78,9 @@ def _spec():
         'check_updates': (False, [True, False]),
         # Writing: say an equation as plain text when the cursor comes to it (NVDA's focus mode reads only its start)
         'say_equations': (True, [True, False]),
+        # Writing: the words for an equation: 'maths' is MathCAT's, as NVDA says it in browse mode
+        # (math_speech.py; the typed form where MathCAT is not installed), 'typed' is its plain text
+        'equation_speech': ('maths', ['maths', 'typed']),
         'bass_mode': ('x-and-y', ['x-and-y', 'x-only', 'y-only', 'off']),
         # Stereo: 'original' (edges almost fully left and right) or 'wider' (sound-engine.js widerPan)
         'stereo_width': ('original', ['original', 'wider']),

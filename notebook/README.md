@@ -132,9 +132,11 @@ The document is one edit field, as in Word, so you can stay in focus mode the wh
 
 ### Reading and changing an equation
 
-- When the cursor comes to an equation, the notebook says it as plain text, for example
-  "Equation: x = log(3^x)". This is because in focus mode NVDA reads only the start of an
-  equation. MathCAT reads the whole equation in browse mode (NVDA+Space).
+- When the cursor comes to an equation, the notebook says it in the words NVDA says it in browse
+  mode, for example "y is equal to, the natural log of x". In focus mode NVDA does not read
+  equations itself, so the notebook asks NVDA's own MathCAT for the words, with your NVDA maths
+  settings. Without NVDA's MathCAT it says the typed form, "Equation: y = ln(x)". Help > Settings >
+  Writing can choose the typed form, or turn this off.
 - Right arrow into an equation (or Left arrow into it from after it) shows it as plain text, so
   the arrow keys move one symbol at a time and you can type to change it. When the cursor leaves,
   it becomes an equation again, exactly as before if you changed nothing. If what you typed is
@@ -606,7 +608,7 @@ into a new folder, and copy your old data folder into it.
 Help > Check for updates asks GitHub's public "latest release" page whether a newer version is out,
 and if so offers its download page. Nothing is downloaded or installed by itself, and nothing about
 you or your documents is sent. Help > Settings > Writing can check each time the app starts (off
-unless you turn it on). See [what changed in 0.8.2](CHANGELOG.md).
+unless you turn it on). See [what changed in 0.8.2.2](CHANGELOG.md).
 
 
 ## The AI add-on (optional)

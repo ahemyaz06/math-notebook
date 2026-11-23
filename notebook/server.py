@@ -13,6 +13,7 @@ import webbrowser
 
 import attachments
 import braille
+import math_speech
 import notebook_core as core
 import settings as app_settings
 import spelling
@@ -172,6 +173,18 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ['api', 'settings', 'reset']:
             app_settings.reset()
             return self._send(200, settings_payload())
+        if parts == ['api', 'math-speech']:
+            # Equations in the words NVDA's MathCAT says in browse mode (math_speech.py).
+            try:
+                items = json.loads(body.decode('utf-8') or '{}')['mathml']
+                if not isinstance(items, list) or len(items) > 5000 or not all(isinstance(m, str) and len(m) < 200000 for m in items):
+                    return self._error(400, 'The request was not understood.')
+                return self._send(200, {'speech': math_speech.speak(items)})
+            except (ValueError, UnicodeDecodeError, KeyError, TypeError):
+                return self._error(400, 'The request was not understood.')
+            except OSError:
+                # Not an error the page should log: it says equations in their typed form.
+                return self._send(200, {'speech': None})
         if parts in (['api', 'spell'], ['api', 'spell', 'add']):
             # Spelling (F7): the Windows spell checker, the one the red underlines use.
             try:

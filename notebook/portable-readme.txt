@@ -1,4 +1,4 @@
-MATH NOTEBOOK 0.8.2 BETA (portable)
+MATH NOTEBOOK 0.8.2.2 BETA (portable)
 
 A document editor for maths that works like Word and reads well with NVDA and MathCAT.
 Nothing to install, and no AI: everything is done by exact rules on this computer.

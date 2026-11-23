@@ -3,7 +3,7 @@
 import temml from './vendor/temml.mjs';
 import { parseBlocks, tableCells } from './markdown.js';
 import { plainToLatex, latexToPlain, splitComment, splitDomain, mixedToLatex } from './equation.js';
-import { mathmlToLatex, latexToMathml } from './mathml.js';
+import { mathmlToLatex, latexToMathml, ungroupFunctionNames, temmlSource } from './mathml.js';
 import { makeDocx, PICTURE_ALT, pictureSize } from './docx.js';
 import { brailleHtml } from './braille.js';
 import { makeGraph, studentGraph, HIDEABLE, parseCondition, compileFunction } from './graphs.js';
@@ -50,6 +50,7 @@ function say(text) {
   setTimeout(() => { $('status').textContent = text; }, 30);
 }
 function setDirty(value, typing = false) {
+  wantMathWords();
   if (value) {
     editRevision += 1;
     queueDraft();
@@ -71,17 +72,33 @@ const newId = () => Math.random().toString(36).slice(2, 10);
 
 // ---------- equations ----------
 
+// Each piece of maths is drawn once and copied after that: opening a notebook, undo and redo
+// draw every equation again, and the same few equations come back again and again.
+const drawnMaths = new Map(); // "d|latex" or "i|latex" -> a drawn span to copy
 export function mathSpan(latex, display = false) {
+  const key = `${display ? 'd' : 'i'}|${latex}`;
+  let drawn = drawnMaths.get(key);
+  if (!drawn) {
+    drawn = drawMaths(latex, display);
+    if (drawnMaths.size >= 3000) drawnMaths.clear();
+    drawnMaths.set(key, drawn);
+  }
+  return drawn.cloneNode(true);
+}
+
+function drawMaths(latex, display) {
   const span = el('span', { class: 'eq', contenteditable: 'false', 'data-latex': latex });
   if (display) span.dataset.display = 'true';
   try {
-    temml.render(latex, span, { displayMode: display, annotate: true, throwOnError: true });
+    temml.render(temmlSource(latex), span, { displayMode: display, annotate: true, throwOnError: true });
     // A one-letter <mi> is drawn in italics by Chromium swapping x for the maths letter 𝑥, and
     // that swapped letter is what NVDA gets in focus mode (it says "normalized"). The CSS turns
     // the swap off (editor.css); these letters are put in italics the plain way instead.
     for (const mi of span.querySelectorAll('mi')) {
       if (!mi.hasAttribute('mathvariant') && /^[A-Za-zα-ω]$/u.test(mi.textContent)) mi.classList.add('tml-italic');
     }
+    // ln(x) is said "the natural log of x" in browse mode, not "the natural log of, times x" (mathml.js).
+    ungroupFunctionNames(span);
   } catch {
     span.textContent = latex;
     span.classList.add('math-error');
@@ -338,16 +355,13 @@ function tableBlock(rows) {
   return table;
 }
 
-// A question is its "Problem" or "Example" heading, its text and its graphs, up to the answer box
-// after it. Those are read-only (data-question), so a key pressed by mistake cannot change them.
-// A line the checker flagged stays editable: the fix may be in it. Answer boxes are editable.
-// The developer shortcut (Ctrl+Shift+Alt+U) makes everything editable until pressed again.
-let everythingEditable = false;
-function lockQuestions(root = doc) {
-  for (const node of root.querySelectorAll('[data-question]')) {
-    if (everythingEditable) node.removeAttribute('contenteditable');
-    else node.setAttribute('contenteditable', 'false');
-  }
+// A question from a PDF (its "Problem" or "Example" heading, its text and its graphs, up to the
+// answer box after it) is marked data-question. It is ordinary text that can be read and changed
+// like any other line. (Up to 0.8.2 it was read-only, and a read-only part inside the document
+// made NVDA's focus mode read one letter or nothing there.) Files and drafts from then still
+// carry the read-only mark; it is taken off here.
+function unlockQuestions(root = doc) {
+  for (const node of root.querySelectorAll('[data-question][contenteditable]')) node.removeAttribute('contenteditable');
 }
 
 function pageBlocks(record, docId) {
@@ -506,7 +520,6 @@ async function pollImport(job) {
   while (ready.has(job.next) || errors[job.next]) {
     if (ready.has(job.next)) {
       doc.append(...pageBlocks(ready.get(job.next), job.id));
-      lockQuestions();
       if (job.next === 1) say('Page 1 is in the document. Press F8 to go to the first review note.');
     } else {
       const p = el('p', { class: 'warned', 'data-warning': JSON.stringify([`Page ${job.next} could not be read: ${errors[job.next]}`]) }, `Page ${job.next} could not be converted.`);
@@ -639,7 +652,7 @@ function cleanNodes(html, attrs = ALLOWED_ATTRS) {
 function sanitizeInto(target, html) {
   target.replaceChildren(...cleanNodes(html));
   markComments(target); // a saved file keeps the class; the role is put back here
-  lockQuestions(target);
+  unlockQuestions(target);
 }
 
 function loadNotebook(text, path, recovered = null) {
@@ -866,7 +879,7 @@ function restoreUndo(from, to, word) {
   openText = null;
   doc.innerHTML = state.html; // our own document, as it was: already clean
   fillEquations(doc);
-  lockQuestions();
+  unlockQuestions();
   graphs.clear();
   for (const [id, g] of state.graphs) graphs.set(id, g);
   refreshGraphLines(); // the numbers may have been changed (F2) since this step
@@ -2084,6 +2097,8 @@ function closeEquationText() {
   }
   const eq = mathSpan(result.latex, open.display);
   open.span.replaceWith(eq);
+  // Just heard symbol by symbol and not changed: it is not said again on stepping out of it.
+  if (!result.changed) announcedEquation = eq;
   return eq;
 }
 
@@ -2257,7 +2272,7 @@ function setBlockType(tag) {
 
 function readLine() {
   const eq = equationAtCaret();
-  if (eq) { say(`Equation: ${latexToPlain(eq.dataset.latex)}`); return; }
+  if (eq) { equationWords(eq).then((words) => say(words)); return; }
   const block = currentBlock();
   say(block ? spoken(block) || 'Blank line.' : 'Nothing here.');
 }
@@ -3058,11 +3073,15 @@ document.addEventListener('keydown', (e) => {
 // The toolbar shows the state at the caret: bold on or off, the line's style.
 function updateToolbar() {
   if (!inDocument()) return;
+  // Only what changed is written: each change is a message to NVDA, and this runs on every key.
   for (const name of ['bold', 'italic', 'underline']) {
-    toolbar.querySelector(`[data-command="${name}"]`).setAttribute('aria-pressed', String(document.queryCommandState(name)));
+    const button = toolbar.querySelector(`[data-command="${name}"]`);
+    const pressed = String(document.queryCommandState(name));
+    if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
   }
   const block = currentBlock();
-  $('tb-style').value = { H1: 'heading1', H2: 'heading2', H3: 'heading3' }[block?.tagName] || 'normalText';
+  const style = { H1: 'heading1', H2: 'heading2', H3: 'heading3' }[block?.tagName] || 'normalText';
+  if ($('tb-style').value !== style) $('tb-style').value = style;
 }
 document.addEventListener('selectionchange', updateToolbar);
 
@@ -3770,27 +3789,6 @@ doc.addEventListener('keydown', (e) => {
   // Chromium's caret does not stop at the equation (it stays put, or lands inside the comment,
   // where the equation is neither said nor reachable), so it is put just after the equation.
   // In a paragraph that wraps, only its first line (Up) or last line (Down) leaves it.
-  // A question cannot be typed in, but the cursor still stops in it, so Up and Down read every
-  // question line by line and reach the answer box after it. (Chromium would skip a read-only
-  // paragraph.) Down lands at a question's start, Up at its end.
-  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.altKey && getSelection().isCollapsed && !everythingEditable) {
-    const block = currentBlock();
-    const target = e.key === 'ArrowUp' ? block?.previousElementSibling : block?.nextElementSibling;
-    if (target?.hasAttribute('data-question')) {
-      e.preventDefault();
-      const r = document.createRange();
-      r.selectNodeContents(target);
-      r.collapse(e.key === 'ArrowDown');
-      getSelection().removeAllRanges();
-      getSelection().addRange(r);
-      return;
-    }
-    if (block?.hasAttribute('data-question') && target) {
-      e.preventDefault();
-      placeCaretIn(target);
-      return;
-    }
-  }
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.altKey && getSelection().isCollapsed) {
     const block = currentBlock();
     const target = e.key === 'ArrowUp' ? block?.previousElementSibling : block?.nextElementSibling;
@@ -3841,59 +3839,6 @@ document.addEventListener('keydown', (e) => {
 });
 window.pageKeys = () => Object.keys(DOCUMENT_KEYS); // the menu bar leaves these to the page
 
-// A question cannot be changed by typing, Delete, Backspace, cut or paste that reaches into it
-// (select all then Delete would otherwise remove the questions too). The caret and the arrow keys
-// still move through it, so a question can be read.
-doc.addEventListener('beforeinput', (e) => {
-  if (everythingEditable) return;
-  const sel = getSelection();
-  // (The browser's own target ranges are fixed ranges, which cannot be asked what they touch.)
-  const ranges = [...(e.getTargetRanges?.() || [])].map((s) => {
-    const r = document.createRange();
-    try { r.setStart(s.startContainer, s.startOffset); r.setEnd(s.endContainer, s.endOffset); } catch { return null; }
-    return r;
-  }).filter(Boolean);
-  if (sel.rangeCount) ranges.push(sel.getRangeAt(0));
-  const locked = [...doc.querySelectorAll('[data-question]')];
-  // Backspace or Delete at the edge of a box, where the next key would join the question: the
-  // browser does not always say which range it will delete, so the edge is checked directly.
-  let joinsQuestion = false;
-  if (e.inputType?.startsWith('delete') && sel.isCollapsed && sel.rangeCount) {
-    const caret = sel.getRangeAt(0);
-    let block = caret.startContainer;
-    while (block && block.parentNode !== doc) block = block.parentNode;
-    if (block && block !== doc) {
-      const before = document.createRange(); before.setStart(block, 0); before.setEnd(caret.startContainer, caret.startOffset);
-      const after = document.createRange(); after.selectNodeContents(block); after.setStart(caret.startContainer, caret.startOffset);
-      if (e.inputType.includes('Backward') && before.toString() === '' && block.previousElementSibling?.hasAttribute('data-question')) joinsQuestion = true;
-      if (e.inputType.includes('Forward') && after.toString() === '' && block.nextElementSibling?.hasAttribute('data-question')) joinsQuestion = true;
-    }
-  }
-  if (joinsQuestion || ranges.some((r) => locked.some((node) => r.intersectsNode(node)))) {
-    e.preventDefault();
-    say('That is a question. Write your answer in the answer box after it.');
-  }
-});
-
-// With the cursor inside a question the browser sends no input at all for a key (the question
-// is read-only), so nothing would be said: a key that would write or delete says why not.
-doc.addEventListener('keydown', (e) => {
-  if (everythingEditable || e.ctrlKey || e.altKey || e.metaKey) return;
-  if (!(e.key.length === 1 || ['Backspace', 'Delete', 'Enter'].includes(e.key))) return;
-  if (!currentBlock()?.hasAttribute('data-question') || !getSelection().isCollapsed) return;
-  e.preventDefault();
-  say('That is a question. Write your answer in the answer box after it.');
-});
-
-// Developer shortcut: everything becomes editable (questions too); press again to lock them.
-// It is not in the keys list or the menus.
-document.addEventListener('keydown', (e) => {
-  if (shortcutOf(e) !== 'Ctrl+Shift+Alt+U') return;
-  e.preventDefault();
-  everythingEditable = !everythingEditable;
-  lockQuestions();
-  say(everythingEditable ? 'Developer: everything is editable.' : 'Questions are locked again.');
-});
 // Loose text or equations straight in the document go into a paragraph as they appear.
 function tidy() {
   const loose = [...doc.childNodes].some((n) => isInline(n) && (n.nodeType !== Node.TEXT_NODE || n.textContent.trim()));
@@ -4154,16 +4099,20 @@ document.addEventListener('selectionchange', () => {
   announceEquation();
 });
 
-// In focus mode NVDA reads only the start of an equation (MathCAT reads it in browse mode), so
-// when the cursor comes to an equation, it is said once as plain text. Help > Settings > Writing can
-// turn this off.
+// In focus mode NVDA does not read an equation (it reads them only in browse mode, with MathCAT),
+// so when the cursor comes to one, it is said once. The words are MathCAT's own, from NVDA's copy
+// of it and NVDA's maths settings (math_speech.py): the words browse mode says. Without MathCAT, or
+// when Help > Settings > Writing asks for it, the typed form is said. Writing can turn this off.
 let announcedEquation = null;
 let announceTimer = null;
+const ANNOUNCE_PAUSE = 90; // ms: longer than a held arrow key's repeat, so lines passed by stay quiet
 function announceEquation() {
   clearTimeout(announceTimer);
-  // Away from it, even for a moment (Up then Down quickly), it is said again on coming back.
-  if (!caretBeside(equationAtCaret())) announcedEquation = null;
-  announceTimer = setTimeout(() => {
+  // Away from it, even for a moment (Up then Down quickly, also to an equation on the next
+  // line), it is said again on coming back.
+  const here = equationAtCaret();
+  if (!caretBeside(here) || here !== announcedEquation) announcedEquation = null;
+  announceTimer = setTimeout(async () => {
     if (savedSettings?.values?.say_equations === false || document.activeElement !== doc) return;
     // Said when the caret comes beside it; reading on into its comment and coming back says it again.
     let eq = equationAtCaret();
@@ -4171,11 +4120,73 @@ function announceEquation() {
     if (eq === announcedEquation) return;
     announcedEquation = eq;
     if (!eq) return;
-    const words = latexToPlain(eq.dataset.latex);
+    const words = await equationWords(eq);
+    if (announcedEquation !== eq) return; // the cursor moved on while the words were fetched
     // Just converted or copied: that was said a moment ago.
-    if (Date.now() - lastSaid.at < 600 && lastSaid.text.includes(words)) return;
-    say(`Equation: ${words}`);
-  }, 250);
+    if (Date.now() - lastSaid.at < 600 && lastSaid.text.includes(latexToPlain(eq.dataset.latex))) return;
+    say(words);
+  }, ANNOUNCE_PAUSE);
+}
+
+// ---------- equations in MathCAT's words ----------
+
+const mathWords = new Map(); // "d|latex" or "i|latex" -> MathCAT's words (null: it could not say it)
+const wordsWanted = new Map(); // the same keys -> the equation's MathML, not asked for yet
+const wordsWaiting = new Map(); // the same keys -> the request fetching their words
+let mathcatHere = null; // false once the reader says MathCAT is not on this computer
+let wordsTimer = null;
+const wordsKey = (eq) => `${eq.dataset.display === 'true' ? 'd' : 'i'}|${eq.dataset.latex}`;
+const useMathcat = () => mathcatHere !== false && savedSettings?.values?.equation_speech !== 'typed';
+
+// The words of every equation in the document are fetched ahead, a moment after each change, so
+// coming to one says it at once.
+function wantMathWords() {
+  clearTimeout(wordsTimer);
+  wordsTimer = setTimeout(() => {
+    if (!useMathcat()) return;
+    for (const eq of doc.querySelectorAll('.eq[data-latex]')) {
+      const key = wordsKey(eq);
+      if (mathWords.has(key) || wordsWaiting.has(key) || wordsWanted.has(key)) continue;
+      const math = eq.querySelector('math');
+      if (math) wordsWanted.set(key, math.outerHTML);
+    }
+    fetchMathWords();
+  }, 300);
+}
+
+function fetchMathWords() {
+  if (!wordsWanted.size) return;
+  const batch = [...wordsWanted];
+  wordsWanted.clear();
+  const asked = fetch('/api/math-speech', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mathml: batch.map(([, m]) => m) }) })
+    .then(async (response) => {
+      if (!response.ok) return;
+      const { speech } = await response.json();
+      mathcatHere = Array.isArray(speech); // null: MathCAT is not on this computer
+      if (!mathcatHere) return;
+      batch.forEach(([key], i) => mathWords.set(key, typeof speech[i] === 'string' ? speech[i] : null));
+    })
+    .catch(() => {})
+    .finally(() => { for (const [key] of batch) wordsWaiting.delete(key); });
+  for (const [key] of batch) wordsWaiting.set(key, asked);
+}
+
+// What is said for an equation: MathCAT's words when it can say it, else the typed form.
+async function equationWords(eq) {
+  const typed = `Equation: ${latexToPlain(eq.dataset.latex)}`;
+  if (!useMathcat()) return typed;
+  const key = wordsKey(eq);
+  if (!mathWords.has(key)) {
+    if (!wordsWaiting.has(key)) {
+      const math = eq.querySelector('math');
+      if (!math) return typed;
+      wordsWanted.set(key, math.outerHTML);
+      fetchMathWords();
+    }
+    // Never a long pause: after 0.4 seconds the typed form is said instead.
+    await Promise.race([wordsWaiting.get(key), new Promise((resolve) => setTimeout(resolve, 400))]);
+  }
+  return (useMathcat() && mathWords.get(key)) || typed;
 }
 
 const first = el('p');

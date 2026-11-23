@@ -31,7 +31,7 @@ BASE_PYTHON = Path(sys.base_prefix)  # the Python this venv was made from
 # What the reader imports (pdf_inspector needs NumPy, the reader pdfplumber and PDFium). Not OpenCV:
 # image_ops.py does pdf_inspector's few image steps with NumPy and gives the same results.
 PACKAGES = ['pypdfium2', 'pdfplumber', 'numpy']
-NOTEBOOK_FILES = ['server.py', 'notebook_core.py', 'pdf_text_reader.py', 'reading_check.py', 'checker.py', 'settings.py', 'attachments.py', 'spelling.py', 'braille.py', 'README.md', 'CHANGELOG.md', 'VERSION']
+NOTEBOOK_FILES = ['server.py', 'notebook_core.py', 'pdf_text_reader.py', 'reading_check.py', 'checker.py', 'settings.py', 'attachments.py', 'spelling.py', 'math_speech.py', 'braille.py', 'README.md', 'CHANGELOG.md', 'VERSION']
 VERSION = (NOTEBOOK / 'VERSION').read_text(encoding='utf-8').strip()  # the one place the version is set
 LAB_FILES = ['pdf_inspector.py', 'image_ops.py', 'vector_graph.py']
 # Parts of the standard library a reading server never uses.
@@ -153,7 +153,7 @@ def build():
 def check():
     """Start the bundled Python the way the app does and import everything the reader needs."""
     py = APP / 'python' / 'python.exe'
-    code = ('import sys, notebook_core, settings, attachments, spelling, braille, pdf_inspector, image_ops, vector_graph, numpy, pdfplumber, pypdfium2, importlib.util; '
+    code = ('import sys, notebook_core, settings, attachments, spelling, math_speech, braille, pdf_inspector, image_ops, vector_graph, numpy, pdfplumber, pypdfium2, importlib.util; '
             'assert importlib.util.find_spec("cv2") is None, "OpenCV is in the build"; '
             'print(sys.version.split()[0], "AI" if settings.AI else "no AI", sys.prefix)')
     # No compiled cache files from this run: they would carry this computer's folder names.

@@ -2,6 +2,7 @@
 // Math becomes MathML (read by MathCAT in NVDA); all other text goes in as plain
 // text, never as HTML, so nothing in a document can run as code.
 import temml from './vendor/temml.mjs';
+import { ungroupFunctionNames } from './mathml.js';
 
 const PROBLEM = /^(\d{1,3})\.\s+(.*)$/;
 const EXAMPLE = /^\*{0,2}(Example\s+\d+[a-z]?)\s*[:.]?\*{0,2}\s*(.*)$/i;
@@ -79,6 +80,7 @@ export function mathElement(tex, display) {
   holder.className = display ? 'math-display' : 'math-inline';
   try {
     temml.render(tex, holder, { displayMode: display, annotate: true, throwOnError: true });
+    ungroupFunctionNames(holder); // as in the editor: ln(x) is said "the natural log of x"
   } catch {
     // Show the source rather than guessing at a picture of it.
     holder.textContent = tex;
