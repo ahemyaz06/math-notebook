@@ -67,12 +67,6 @@ Earlier versions are described on the [releases page](https://github.com/ahemyaz
 - y = sin x on [0, 2pi] said its end dot was at "minus 2.4 times 10 to the minus 16"; it is 0.
 - x^2 = y was named "y = x^2 = y"; it is y = x^2.
 
-### Not tried yet
-
-- Everything above was checked by the automatic tests, which drive the real app with key presses,
-  and every new number against maths worked out by hand. The new keys (B, Shift+T, E, W, Q) and
-  the bigger graph mode have not yet been used with NVDA by a person.
-
 ## 0.8.1 (beta)
 
 ### An Import menu
